@@ -47,11 +47,13 @@ export function stripPDFSyntaxNoise(text: string): string {
   // 2. Strip internal PDF structural operators, object tags, and CMap headers
   result = result
     .replace(/\/Type\s*\/[A-Za-z0-9]+/gi, ' ')
-    .replace(/\/StructElem|\/OutputIntent|\/GTS_[A-Za-z0-9]+|\/Group|\/Transparency|\/Font|\/ProcSet|\/MediaBox|\/CropBox|\/Resources|\/Parent|\/Kids|\/Root|\/Info/gi, ' ')
+    .replace(/\/StructElem|\/OutputIntent|\/GTS_[A-Za-z0-9]+|\/Group|\/Transparency|\/Font|\/ProcSet|\/MediaBox|\/CropBox|\/Resources|\/Parent|\/Kids|\/Root|\/Info|\/FontDescriptor|\/FontFile\d*/gi, ' ')
+    .replace(/\bSubtype\b|\bCIDFontType\d*\b|\bCIDToGIDMap\b|\bCIDSystemInfo\b|\bIdentity\b/gi, ' ')
     .replace(/\b\d+\s+\d+\s+obj\b/gi, ' ')
     .replace(/\bendobj\b/gi, ' ')
     .replace(/\/P\s+\d+\s+\d+\s+R/gi, ' ')
     .replace(/\/Last\s+\d+\s+\d+\s+R/gi, ' ')
+    .replace(/\/F\d+\s+\d+\s+\d+\s+R/gi, ' ')
     .replace(/\/Count\s+\d+/gi, ' ')
     .replace(/\/T\s+|\/E\s+|\/S\s+|\/V\s+/gi, ' ')
     .replace(/XYZ\s+[^\s]+\s+[^\s]+\s+[^\s]+/gi, ' ')
@@ -64,6 +66,32 @@ export function stripPDFSyntaxNoise(text: string): string {
 
   return result;
 }
+
+/**
+ * Detects if a chunk consists primarily of raw PDF syntax/CMap structural noise.
+ */
+export function isPDFSyntaxChunk(text: string): boolean {
+  if (!text) return true;
+  const upper = text.toUpperCase();
+  const pdfKeywords = [
+    'CIDFONTTYPE',
+    'CIDTOGIDMAP',
+    'CIDSYSTEMINFO',
+    'OUTPUTINTENT',
+    'STRUCTELEM',
+    'ENDOBJ',
+    'FONTDESCRIPTOR',
+    'IDENTITY',
+    'GTS_PDFA1',
+    'SUBTYPE'
+  ];
+  let matchCount = 0;
+  for (const kw of pdfKeywords) {
+    if (upper.includes(kw)) matchCount++;
+  }
+  return matchCount >= 2 || upper.includes('CIDFONTTYPE2') || upper.includes('OUTPUTINTENT');
+}
+
 
 /**
  * Checks if extracted text is pure binary noise.

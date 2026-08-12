@@ -5,7 +5,7 @@ import { AgentRole, MultiAgentState } from './state';
 import { LLMProviderService } from '../services/llm';
 import { VectorizeService } from '../services/vectorize';
 
-import { cleanPrintableText, isBinaryNoise } from '../utils/pdfExtractor';
+import { cleanPrintableText, isBinaryNoise, stripPDFSyntaxNoise, isPDFSyntaxChunk } from '../utils/pdfExtractor';
 
 export class AdvancedRAGAgent extends BaseAgent {
   public role: AgentRole = 'RAG_AGENT';
@@ -29,9 +29,10 @@ export class AdvancedRAGAgent extends BaseAgent {
       const sanitizedChunks = rawChunks
         .map(c => ({
           ...c,
-          text: cleanPrintableText(c.text)
+          text: cleanPrintableText(stripPDFSyntaxNoise(c.text))
         }))
-        .filter(c => c.text.trim().length > 3 && !isBinaryNoise(c.text));
+        .filter(c => c.text.trim().length > 10 && !isPDFSyntaxChunk(c.text) && !isBinaryNoise(c.text));
+
 
       // Hybrid Retrieval: Keyword Boost Reranking
       const keywords = state.userPrompt
