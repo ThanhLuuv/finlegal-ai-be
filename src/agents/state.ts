@@ -37,10 +37,12 @@ export interface MultiAgentState {
   userPrompt: string;
   selectedDocId?: string;
   intent?: UserIntent;
-  ragContext?: RagContextChunk[];
+  ragContext?: string | RagContextChunk[];
   sqlQuery?: string;
   sqlResult?: Record<string, unknown>[];
+  sqlData?: any;
   auditReport?: AuditReport;
   thoughtProcess: AgentThoughtStep[];
   finalAnswer: string;
 }
+

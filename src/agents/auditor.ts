@@ -14,9 +14,11 @@ export class RiskAuditorAgent extends BaseAgent {
   public async execute(state: MultiAgentState): Promise<MultiAgentState> {
     this.recordThought(state, 'Cross-verifying PDF document claims against D1 Database sales records...');
 
-    const ragContextText = (state.ragContext || [])
-      .map(c => `[Source: ${c.source}, Page ${c.page}]:\n${c.text}`)
-      .join('\n\n');
+    const ragContextText = typeof state.ragContext === 'string'
+      ? state.ragContext
+      : (state.ragContext || [])
+          .map(c => `[Source: ${c.source}, Page ${c.page}]:\n${c.text}`)
+          .join('\n\n');
 
     const sqlResultsJson = JSON.stringify(state.sqlResult || [], null, 2);
 

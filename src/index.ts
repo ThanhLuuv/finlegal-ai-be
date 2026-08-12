@@ -14,9 +14,9 @@ import { LLMProviderService } from './services/llm';
 import { D1DatabaseService } from './services/d1';
 import { VectorizeService } from './services/vectorize';
 import { R2StorageService } from './services/r2';
-import { TablePreservingChunker } from './services/chunker';
-import { extractTextFromPDFBuffer } from './utils/pdfExtractor';
-import { AIDocumentProcessorService } from './services/aiDocProcessor';
+import { DocumentPipeline } from './document/documentPipeline';
+import { VectorRepository } from './storage/vectorRepository';
+import { AnswerAgent } from './agents/answerAgent';
 import { LangfuseLogger } from './utils/langfuse';
 
 // Bindings Environment Interface for Workers
@@ -196,63 +196,48 @@ app.post('/api/upload', async (c) => {
     }
 
     const file = formData.get ? formData.get('file') : formData['file'];
-    let textContent = '';
     let fileName = 'document.pdf';
-  const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY, c.env.OPENAI_API_KEY);
+    let arrayBuffer: ArrayBuffer | null = null;
+    const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY, c.env.OPENAI_API_KEY);
 
     if (file && typeof file !== 'string' && 'arrayBuffer' in file) {
       fileName = file.name || 'contract_document.pdf';
-      const arrayBuffer = await file.arrayBuffer();
-      const docId = `doc_${Date.now()}`;
-      await c.env.R2.put(`documents/${docId}/${fileName}`, arrayBuffer);
-
-      // Primary: Modern Multimodal AI Document Parsing (Gemini 2.0 Flash / 1.5 Flash)
-      const multimodalText = await llm.processMultimodalDocument(arrayBuffer, fileName);
-      if (multimodalText && multimodalText.trim().length > 20) {
-        textContent = multimodalText;
-      } else {
-        // Fallback: Worker text extraction
-        textContent = await extractTextFromPDFBuffer(arrayBuffer);
-      }
+      arrayBuffer = (await file.arrayBuffer()) as ArrayBuffer;
     } else if (typeof formData['text'] === 'string' || (formData.get && typeof formData.get('text') === 'string')) {
-      textContent = typeof formData['text'] === 'string' ? formData['text'] : formData.get('text');
+      const textContent = typeof formData['text'] === 'string' ? formData['text'] : formData.get('text');
       fileName = (formData['fileName'] as string) || (formData.get && formData.get('fileName')) || 'text_contract.txt';
+      const enc = new TextEncoder().encode(textContent);
+      const buf = new ArrayBuffer(enc.byteLength);
+      new Uint8Array(buf).set(enc);
+      arrayBuffer = buf;
     }
 
-    if (!textContent || textContent.trim().length === 0) {
-      return c.json({ error: 'Không thể đọc hoặc trích xuất nội dung văn bản từ tập tin đã chọn.' }, 400);
+    if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+      return c.json({ error: 'Không thể đọc tập tin đã chọn.' }, 400);
     }
-
-    const aiProcessor = new AIDocumentProcessorService(llm);
-    const structuredMarkdown = await aiProcessor.cleanAndStructureDocument(textContent, fileName);
 
     const docId = `doc_${Date.now()}`;
+    const pipeline = new DocumentPipeline(
+      llm,
+      c.env.DB,
+      c.env.VECTORIZE,
+      c.env.R2,
+      c.env.AI
+    );
 
-    const chunker = new TablePreservingChunker(1000, 200);
-    const chunks = chunker.chunkDocument(structuredMarkdown);
-
-    // Index into Cloudflare Vectorize
-    const vectorizeService = new VectorizeService(c.env.VECTORIZE, c.env.AI);
-    await vectorizeService.insertChunks(docId, fileName, chunks);
-
-    const r2Key = `documents/${docId}/${fileName}`;
-
-    // Save record to Cloudflare D1 Database
-    await c.env.DB.prepare(
-      `INSERT INTO document_records (doc_id, file_name, r2_key, total_pages, total_chunks, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).bind(docId, fileName, r2Key, 1, chunks.length, new Date().toISOString()).run();
+    const result = await pipeline.processDocument(docId, fileName, arrayBuffer);
 
     return c.json({
       success: true,
-      docId,
-      fileName,
-      totalChunks: chunks.length,
-      message: 'Hợp đồng đã được phân tích và lưu trữ thành công vào kho Vector.'
+      docId: result.docId,
+      fileName: result.fileName,
+      totalChunks: result.totalChunks,
+      warnings: result.warnings,
+      message: result.message
     });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    return c.json({ error: `Lỗi tải tập tin: ${errorMsg}` }, 500);
+    return c.json({ error: `Lỗi xử lý tài liệu: ${errorMsg}` }, 500);
   }
 });
 
@@ -298,17 +283,18 @@ app.post('/api/chat/stream', async (c) => {
     console.warn('Rate limiting check warning:', rateErr);
   }
 
-  // Initialize Services
+  // Initialize Services & Repositories
   const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY, c.env.OPENAI_API_KEY);
   const d1Service = new D1DatabaseService(c.env.DB);
-  const vectorizeService = new VectorizeService(c.env.VECTORIZE, c.env.AI);
+  const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
   const langfuse = new LangfuseLogger(c.env.LANGFUSE_PUBLIC_KEY, c.env.LANGFUSE_SECRET_KEY, c.env.LANGFUSE_HOST);
 
   // Initialize Multi-Agent instances
   const supervisor = new SupervisorAgent(llm);
-  const ragAgent = new AdvancedRAGAgent(llm, vectorizeService);
+  const ragAgent = new AdvancedRAGAgent(llm, vectorRepo);
   const sqlAgent = new SQLToolAgent(llm, d1Service);
   const auditor = new RiskAuditorAgent(llm);
+  const answerAgent = new AnswerAgent(llm);
 
   return streamText(c, async (stream) => {
     // Helper to stream JSON SSE events
@@ -347,10 +333,15 @@ app.post('/api/chat/stream', async (c) => {
         await sendEvent('thought', state.thoughtProcess[state.thoughtProcess.length - 1]);
       }
 
-      // Step 4: Auditor Synthesizer & Cross-checker
+      // Step 4: Auditor & Zero-Hallucination Answer Synthesizer
       if (intent === 'HYBRID_AUDIT' || intent === 'RAG_ONLY' || intent === 'SQL_ONLY') {
-        state = await auditor.execute(state);
-        await sendEvent('thought', state.thoughtProcess[state.thoughtProcess.length - 1]);
+        if (intent === 'HYBRID_AUDIT') {
+          state = await auditor.execute(state);
+          await sendEvent('thought', state.thoughtProcess[state.thoughtProcess.length - 1]);
+        }
+        
+        const ragResult = (state as any).ragResult;
+        state.finalAnswer = await answerAgent.generateAnswer(state, ragResult);
       } else {
         // General Chat
         const generalReply = await llm.generateText([

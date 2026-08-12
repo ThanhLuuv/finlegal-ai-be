@@ -1,83 +1,53 @@
-// Advanced RAG Agent (Hybrid Retrieval & Keyword Boost over Cloudflare Vectorize)
+// Advanced RAG Agent (Vector Retrieval + Lexical Keyword Reranking & Structured Citations)
 
 import { BaseAgent } from './base';
 import { AgentRole, MultiAgentState } from './state';
 import { LLMProviderService } from '../services/llm';
-import { VectorizeService } from '../services/vectorize';
-
-import { cleanPrintableText, isBinaryNoise, stripPDFSyntaxNoise, isPDFSyntaxChunk } from '../utils/pdfExtractor';
+import { RagService } from '../rag/ragService';
+import { VectorRepository } from '../storage/vectorRepository';
 
 export class AdvancedRAGAgent extends BaseAgent {
   public role: AgentRole = 'RAG_AGENT';
-  private vectorizeService: VectorizeService;
+  private ragService: RagService;
 
-  constructor(llm: LLMProviderService, vectorizeService: VectorizeService) {
+  constructor(llm: LLMProviderService, vectorRepo: VectorRepository) {
     super(llm);
-    this.vectorizeService = vectorizeService;
+    this.ragService = new RagService(vectorRepo);
   }
 
   public async execute(state: MultiAgentState): Promise<MultiAgentState> {
-    this.recordThought(state, 'Querying Cloudflare Vectorize index with Hybrid Retrieval & Multilingual Embedding...');
+    this.recordThought(state, 'Executing Vector Retrieval & Lexical Reranking with Metadata Filtering...');
 
     try {
-      const rawChunks = await this.vectorizeService.searchSimilar(
+      const ragResult = await this.ragService.retrieveEvidence(
         state.userPrompt,
-        8, // Retrieve top 8 vector matches
         state.selectedDocId
       );
 
-      const sanitizedChunks = rawChunks
-        .map(c => ({
-          ...c,
-          text: cleanPrintableText(stripPDFSyntaxNoise(c.text))
-        }))
-        .filter(c => c.text.trim().length > 10 && !isPDFSyntaxChunk(c.text) && !isBinaryNoise(c.text));
+      state.ragContext = ragResult.formattedContext;
+      (state as any).ragResult = ragResult; // Attach structured RetrievalResult
 
-
-      // Hybrid Retrieval: Keyword Boost Reranking
-      const keywords = state.userPrompt
-        .toLowerCase()
-        .replace(/[^\w\sÀ-ỹ0-9]/g, ' ')
-        .split(/\s+/)
-        .filter(k => k.length > 2);
-
-      const rerankedChunks = sanitizedChunks.map(chunk => {
-        const lowerText = chunk.text.toLowerCase();
-        let keywordScoreBoost = 0;
-
-        for (const kw of keywords) {
-          if (lowerText.includes(kw)) {
-            keywordScoreBoost += 0.15; // Boost score for matching keyword token
-          }
-        }
-
-        return {
-          ...chunk,
-          score: Math.min(1.0, chunk.score + keywordScoreBoost)
-        };
-      });
-
-      // Sort by final hybrid score descending
-      rerankedChunks.sort((a, b) => b.score - a.score);
-
-      state.ragContext = rerankedChunks;
-
-      const summary = rerankedChunks
-        .map(c => `[Trang ${c.page} | Score: ${(c.score * 100).toFixed(1)}%]: ${c.text.slice(0, 100)}...`)
+      const preview = ragResult.evidence
+        .map(e => `[${e.citation.documentName} | ${e.citation.sectionTitle || 'Section'} | Trang ${e.citation.pageStart}]: ${e.content.slice(0, 90)}...`)
         .join('\n');
-      
+
       this.recordThought(
-        state, 
-        `Retrieved ${rerankedChunks.length} high-confidence hybrid vector & keyword chunks.`, 
-        { chunksRetrieved: rerankedChunks.length, chunksPreview: summary }
+        state,
+        `Retrieved ${ragResult.evidence.length} structured evidence blocks.`,
+        {
+          chunksRetrieved: ragResult.evidence.length,
+          hasSufficientEvidence: ragResult.hasSufficientEvidence,
+          chunksPreview: preview
+        }
       );
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      this.recordThought(state, `Vector search warning/notice: ${errorMsg}`, { warning: errorMsg });
-      state.ragContext = [];
+      this.recordThought(state, `Vector retrieval notice: ${errorMsg}`, { warning: errorMsg });
+      state.ragContext = 'KHÔNG CÓ DỮ LIỆU TÌM THẤY.';
     }
 
     return state;
   }
 }
+
 

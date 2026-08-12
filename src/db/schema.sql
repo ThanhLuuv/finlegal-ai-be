@@ -16,19 +16,55 @@ CREATE TABLE IF NOT EXISTS sales_transactions (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. Document Registry Metadata Table
+-- 2. Document Registry Metadata Table with Production Lifecycle Tracking
 CREATE TABLE IF NOT EXISTS document_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     doc_id TEXT NOT NULL UNIQUE,
     file_name TEXT NOT NULL,
     r2_key TEXT NOT NULL,
-    total_pages INTEGER NOT NULL,
-    total_chunks INTEGER NOT NULL,
+    total_pages INTEGER NOT NULL DEFAULT 1,
+    total_chunks INTEGER NOT NULL DEFAULT 0,
+    processing_status TEXT DEFAULT 'UPLOADED', -- 'UPLOADED', 'PROCESSING', 'READY', 'FAILED'
+    processing_version TEXT DEFAULT 'v2.0',
+    extraction_method TEXT,
+    processed_at DATETIME,
+    error_code TEXT,
+    error_message TEXT,
     uploaded_by TEXT DEFAULT 'system',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. Audit & Chat Execution Telemetry Logs
+-- 3. Document Section Hierarchy Table
+CREATE TABLE IF NOT EXISTS document_sections (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    title TEXT,
+    section_path TEXT NOT NULL, -- JSON array string, e.g. ["Điều 7", "Khoản 7.2"]
+    page_start INTEGER,
+    page_end INTEGER,
+    content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 4. Structure-Aware Document Chunks Table
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    section_id TEXT,
+    chunk_index INTEGER NOT NULL,
+    chunk_type TEXT NOT NULL, -- 'paragraph', 'section', 'table', 'clause'
+    content TEXT NOT NULL,
+    token_count INTEGER,
+    content_hash TEXT,
+    embedding_version TEXT DEFAULT 'v1',
+    page_start INTEGER,
+    page_end INTEGER,
+    metadata_json TEXT NOT NULL,
+    vector_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 5. Audit & Chat Execution Telemetry Logs
 CREATE TABLE IF NOT EXISTS chat_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
@@ -45,6 +81,8 @@ CREATE TABLE IF NOT EXISTS chat_logs (
 CREATE INDEX IF NOT EXISTS idx_sales_contract_ref ON sales_transactions(contract_ref);
 CREATE INDEX IF NOT EXISTS idx_sales_quarter ON sales_transactions(quarter);
 CREATE INDEX IF NOT EXISTS idx_doc_records_doc_id ON document_records(doc_id);
+CREATE INDEX IF NOT EXISTS idx_doc_sections_doc_id ON document_sections(document_id);
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc_id ON document_chunks(document_id);
 
 -- Initial Enterprise Production Dataset (Real-world Sample Data for Testing)
 INSERT OR IGNORE INTO sales_transactions (transaction_id, customer_name, contract_ref, quarter, revenue_usd, status, transaction_date)
@@ -54,3 +92,4 @@ VALUES
     ('TX-1003', 'GlobalTech Industries', 'CTR-2024-002', 'Q1-2024', 300000.00, 'COMPLETED', '2024-03-28'),
     ('TX-1004', 'GlobalTech Industries', 'CTR-2024-002', 'Q2-2024', 250000.00, 'COMPLETED', '2024-06-28'),
     ('TX-1005', 'Nexus Financial LLC', 'CTR-2024-003', 'Q2-2024', 85000.00, 'COMPLETED', '2024-06-10');
+
