@@ -81,4 +81,34 @@ export class D1DatabaseService {
     const { results } = await statement.all<T>();
     return results || [];
   }
+
+  /**
+   * Persists AI chat trace log into D1 Database `chat_logs` table.
+   */
+  public async saveChatLog(log: {
+    sessionId: string;
+    traceId: string;
+    userPrompt: string;
+    intent: string;
+    thoughtProcess: string;
+    finalResponse: string;
+    riskLevel: string;
+  }): Promise<void> {
+    try {
+      await this.db.prepare(
+        `INSERT INTO chat_logs (session_id, trace_id, user_prompt, intent, thought_process, final_response, risk_level)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        log.sessionId,
+        log.traceId,
+        log.userPrompt,
+        log.intent,
+        log.thoughtProcess,
+        log.finalResponse,
+        log.riskLevel
+      ).run();
+    } catch (err) {
+      console.warn('Failed to insert chat_log into D1:', err);
+    }
+  }
 }

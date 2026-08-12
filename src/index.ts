@@ -165,6 +165,16 @@ app.delete('/api/documents/:docId', async (c) => {
   }
 });
 
+// 3.6. Internal AI Tracing Logs Listing Endpoint
+app.get('/api/admin/logs', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare('SELECT id, session_id, trace_id, user_prompt, intent, thought_process, final_response, risk_level, created_at FROM chat_logs ORDER BY created_at DESC LIMIT 50').all();
+    return c.json({ logs: results || [] });
+  } catch (err) {
+    return c.json({ logs: [] });
+  }
+});
+
 // 4. PDF Document Upload, Chunking & Vector Ingestion Endpoint
 app.post('/api/upload', async (c) => {
   try {
@@ -311,6 +321,19 @@ app.post('/api/chat/stream', async (c) => {
       });
 
       await sendEvent('status', { phase: 'COMPLETED' });
+
+      // Save trace log into D1 Database (Internal Tracing System)
+      c.executionCtx.waitUntil(
+        d1Service.saveChatLog({
+          sessionId,
+          traceId,
+          userPrompt: prompt,
+          intent: state.intent || 'UNKNOWN',
+          thoughtProcess: JSON.stringify(state.thoughtProcess),
+          finalResponse: state.finalAnswer,
+          riskLevel: state.auditReport?.riskLevel || 'NONE'
+        })
+      );
 
       // Log Telemetry to Langfuse
       c.executionCtx.waitUntil(
