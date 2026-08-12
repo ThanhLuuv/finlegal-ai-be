@@ -5,7 +5,7 @@ import { AgentRole, MultiAgentState } from './state';
 import { LLMProviderService } from '../services/llm';
 import { VectorizeService } from '../services/vectorize';
 
-import { cleanPrintableText } from '../utils/pdfExtractor';
+import { cleanPrintableText, isBinaryNoise } from '../utils/pdfExtractor';
 
 export class AdvancedRAGAgent extends BaseAgent {
   public role: AgentRole = 'RAG_AGENT';
@@ -31,7 +31,7 @@ export class AdvancedRAGAgent extends BaseAgent {
           ...c,
           text: cleanPrintableText(c.text)
         }))
-        .filter(c => c.text.trim().length > 3);
+        .filter(c => c.text.trim().length > 3 && !isBinaryNoise(c.text));
 
       state.ragContext = sanitizedChunks;
 

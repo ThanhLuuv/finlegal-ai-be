@@ -10,6 +10,22 @@ export function cleanPrintableText(text: string): string {
 }
 
 /**
+ * Checks if extracted text is binary noise (like "u F r M Y U L = D 1 g R")
+ */
+export function isBinaryNoise(text: string): boolean {
+  if (!text || text.length < 5) return true;
+  
+  // Count real words with length >= 2 vs single letter noise
+  const realWords = text.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [];
+  const singleLetters = text.match(/\b[A-Za-z0-9]\b/g) || [];
+  
+  if (realWords.length < 3 || singleLetters.length > realWords.length * 1.2) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Parses ToUnicode CMap blocks in PDF to map glyph hex codes to UTF-8 characters
  */
 function parseCMap(cmapStr: string): Map<string, string> {
@@ -135,6 +151,10 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
   const latin1Decoder = new TextDecoder('latin1');
   const fullLatin1Str = latin1Decoder.decode(bytes);
 
+  // Extract all valid words >= 2 chars directly from PDF buffer
+  const wordTokens = fullLatin1Str.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [];
+  const validWordsText = wordTokens.join(' ');
+
   // 1. Scan for ToUnicode CMap blocks
   let globalCMap: Map<string, string> | undefined;
   if (fullLatin1Str.includes('beginbfrange') || fullLatin1Str.includes('beginbfchar')) {
@@ -161,14 +181,13 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
       if (decompressed && decompressed.length > 0) {
         const decompressedStr = latin1Decoder.decode(decompressed);
         
-        // Parse CMap inside decompressed stream if present
         let streamCMap = globalCMap;
         if (decompressedStr.includes('beginbfrange') || decompressedStr.includes('beginbfchar')) {
           streamCMap = parseCMap(decompressedStr);
         }
 
         const parsedText = parseTextFromStreamString(decompressedStr, streamCMap);
-        if (parsedText && parsedText.length > 3) {
+        if (parsedText && parsedText.length > 3 && !isBinaryNoise(parsedText)) {
           decompressedTextBlocks.push(parsedText);
         }
       }
@@ -178,20 +197,15 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
   if (decompressedTextBlocks.length > 0) {
     const fullText = decompressedTextBlocks.join('\n\n');
     const cleaned = cleanPrintableText(fullText);
-    if (cleaned.length > 10) return cleaned;
+    if (!isBinaryNoise(cleaned)) return cleaned;
   }
 
   // 3. Fallback: parse uncompressed text blocks
   const fallbackParsed = parseTextFromStreamString(fullLatin1Str, globalCMap);
-  if (fallbackParsed.length > 10) {
+  if (!isBinaryNoise(fallbackParsed)) {
     return cleanPrintableText(fallbackParsed);
   }
 
-  // 4. Ultimate Fallback: Extract all readable word tokens (lengths >= 2) from PDF string
-  const wordTokens = fullLatin1Str.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [];
-  if (wordTokens.length > 5) {
-    return wordTokens.join(' ');
-  }
-
-  return cleanPrintableText(fullLatin1Str);
+  // 4. Return valid words text from PDF buffer
+  return validWordsText.length > 10 ? validWordsText : cleanPrintableText(fullLatin1Str);
 }
