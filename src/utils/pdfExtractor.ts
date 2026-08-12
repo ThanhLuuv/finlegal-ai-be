@@ -1,38 +1,45 @@
-// Comprehensive, pure JS PDF Text & Hex Extractor for Cloudflare Workers Environment
+// Comprehensive, pure JS FlateDecode PDF Text Extractor for Cloudflare Workers Environment
 
-function decodeHexPDFString(hex: string): string {
-  const cleanHex = hex.replace(/[^0-9A-Fa-f]/g, '');
-  if (cleanHex.length === 0 || cleanHex.length % 2 !== 0) return '';
-  
-  // Check if UTF-16BE BOM (FEFF)
-  if (cleanHex.startsWith('FEFF') || cleanHex.startsWith('feff')) {
-    let str = '';
-    for (let i = 4; i < cleanHex.length; i += 4) {
-      const code = parseInt(cleanHex.substring(i, i + 4), 16);
-      if (!isNaN(code) && code > 0) str += String.fromCharCode(code);
-    }
-    return str;
-  }
-
-  // Standard ASCII / UTF-8 byte stream
-  let str = '';
-  for (let i = 0; i < cleanHex.length; i += 2) {
-    const code = parseInt(cleanHex.substring(i, i + 2), 16);
-    if (!isNaN(code) && code >= 32 && code <= 255) {
-      str += String.fromCharCode(code);
-    }
-  }
-  return str;
+export function cleanPrintableText(text: string): string {
+  if (!text) return '';
+  // Remove binary control characters, replacement character (U+FFFD), and non-printable noise
+  return text
+    .replace(/[\x00-\x1F\x7F-\x9F\uFFFD]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-export function extractTextFromPDFBuffer(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const textDecoder = new TextDecoder('latin1');
-  const rawString = textDecoder.decode(bytes);
+async function decompressFlate(bytes: Uint8Array): Promise<Uint8Array | null> {
+  let dataToDecompress = bytes;
+  if (bytes.length > 2 && bytes[0] === 0x78) {
+    dataToDecompress = bytes.subarray(2);
+  }
 
+  try {
+    const ds = new DecompressionStream('deflate-raw');
+    const writer = ds.writable.getWriter();
+    writer.write(dataToDecompress);
+    writer.close();
+    const response = new Response(ds.readable);
+    const buf = await response.arrayBuffer();
+    return new Uint8Array(buf);
+  } catch (e1) {
+    try {
+      const ds = new DecompressionStream('deflate');
+      const writer = ds.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
+      const response = new Response(ds.readable);
+      const buf = await response.arrayBuffer();
+      return new Uint8Array(buf);
+    } catch (e2) {
+      return null;
+    }
+  }
+}
+
+function parseTextFromStreamString(rawString: string): string {
   const textBlocks: string[] = [];
-
-  // 1. Extract BT ... ET blocks (PDF Text Object streams)
   const btRegex = /BT[\s\S]*?ET/g;
   let match: RegExpExecArray | null;
 
@@ -43,60 +50,72 @@ export function extractTextFromPDFBuffer(buffer: ArrayBuffer): string {
     const tjRegex = /\(([\s\S]*?)\)\s*Tj/g;
     let tjMatch: RegExpExecArray | null;
     while ((tjMatch = tjRegex.exec(block)) !== null) {
-      if (tjMatch[1]) textBlocks.push(tjMatch[1]);
+      if (tjMatch[1]) {
+        const cleaned = cleanPrintableText(tjMatch[1]);
+        if (cleaned.length > 0) textBlocks.push(cleaned);
+      }
     }
 
-    // Extract hex strings: <00480065006C006C006F> Tj
-    const hexTjRegex = /<([0-9A-Fa-f\s]+)>\s*Tj/g;
-    let hexTjMatch: RegExpExecArray | null;
-    while ((hexTjMatch = hexTjRegex.exec(block)) !== null) {
-      const decoded = decodeHexPDFString(hexTjMatch[1]);
-      if (decoded) textBlocks.push(decoded);
-    }
-
-    // Extract array strings: [(Hello) -10 (World)] TJ or [<0048> -10 <0065>] TJ
+    // Extract array strings: [(Hello) -10 (World)] TJ
     const tjArrayRegex = /\[([\s\S]*?)\]\s*TJ/g;
     let tjArrayMatch: RegExpExecArray | null;
     while ((tjArrayMatch = tjArrayRegex.exec(block)) !== null) {
       const inner = tjArrayMatch[1];
-      
-      // Match literal strings (xxx)
       const strInside = inner.match(/\(([\s\S]*?)\)/g);
       if (strInside) {
-        textBlocks.push(strInside.map(s => s.slice(1, -1)).join(''));
-      }
-
-      // Match hex strings <xxx>
-      const hexInside = inner.match(/<[0-9A-Fa-f\s]+>/g);
-      if (hexInside) {
-        const decodedHexArray = hexInside.map(h => decodeHexPDFString(h.slice(1, -1))).join('');
-        if (decodedHexArray) textBlocks.push(decodedHexArray);
+        const joined = strInside.map(s => s.slice(1, -1)).join('');
+        const cleaned = cleanPrintableText(joined);
+        if (cleaned.length > 0) textBlocks.push(cleaned);
       }
     }
   }
 
-  const extracted = textBlocks
-    .join(' ')
-    .replace(/\\\( /g, '(')
-    .replace(/\\\)/g, ')')
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\r')
-    .replace(/\\t/g, '\t')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return textBlocks.join(' ');
+}
 
-  if (extracted.length > 20) {
-    return extracted;
+export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<string> {
+  const bytes = new Uint8Array(buffer);
+  const latin1Decoder = new TextDecoder('latin1');
+  const fullLatin1Str = latin1Decoder.decode(bytes);
+
+  const decompressedTextBlocks: string[] = [];
+
+  // Find stream ... endstream positions
+  const streamRegex = /stream[\r\n]+([\s\S]*?)[\r\n]+endstream/g;
+  let streamMatch: RegExpExecArray | null;
+
+  while ((streamMatch = streamRegex.exec(fullLatin1Str)) !== null) {
+    const streamContentStart = streamMatch.index + streamMatch[0].indexOf('stream') + 6;
+    let startOffset = streamContentStart;
+    if (bytes[startOffset] === 13) startOffset++; // \r
+    if (bytes[startOffset] === 10) startOffset++; // \n
+
+    const endOffset = streamMatch.index + streamMatch[0].lastIndexOf('endstream');
+    if (endOffset > startOffset) {
+      const streamBytes = bytes.subarray(startOffset, endOffset);
+      const decompressed = await decompressFlate(streamBytes);
+
+      if (decompressed && decompressed.length > 0) {
+        const decompressedStr = latin1Decoder.decode(decompressed);
+        const parsedText = parseTextFromStreamString(decompressedStr);
+        if (parsedText && parsedText.length > 3) {
+          decompressedTextBlocks.push(parsedText);
+        }
+      }
+    }
   }
 
-  // 2. Fallback: Clean printable text strings from raw buffer
-  const cleanedRaw = rawString
-    .replace(/stream[\s\S]*?endstream/g, ' ')
-    .replace(/obj[\s\S]*?endobj/g, ' ')
-    .replace(/<[0-9A-Fa-f]+>/g, ' ')
-    .replace(/[\x00-\x1F\x7F-\x9F]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  if (decompressedTextBlocks.length > 0) {
+    const fullText = decompressedTextBlocks.join('\n\n');
+    return cleanPrintableText(fullText);
+  }
 
-  return cleanedRaw.length > 0 ? cleanedRaw : rawString;
+  // Fallback: parse uncompressed text blocks
+  const fallbackParsed = parseTextFromStreamString(fullLatin1Str);
+  if (fallbackParsed.length > 10) {
+    return cleanPrintableText(fallbackParsed);
+  }
+
+  // Ultimate Fallback: clean printable letters & numbers only from raw buffer
+  return cleanPrintableText(fullLatin1Str);
 }

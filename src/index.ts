@@ -181,7 +181,7 @@ app.post('/api/upload', async (c) => {
       await c.env.R2.put(`documents/${docId}/${fileName}`, arrayBuffer);
 
       // Extract clean readable text from PDF binary buffer using custom worker parser
-      textContent = extractTextFromPDFBuffer(arrayBuffer);
+      textContent = await extractTextFromPDFBuffer(arrayBuffer);
     } else if (typeof formData['text'] === 'string') {
       textContent = formData['text'];
       fileName = (formData['fileName'] as string) || 'text_contract.txt';

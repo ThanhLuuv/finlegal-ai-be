@@ -5,6 +5,8 @@ import { AgentRole, MultiAgentState } from './state';
 import { LLMProviderService } from '../services/llm';
 import { VectorizeService } from '../services/vectorize';
 
+import { cleanPrintableText } from '../utils/pdfExtractor';
+
 export class AdvancedRAGAgent extends BaseAgent {
   public role: AgentRole = 'RAG_AGENT';
   private vectorizeService: VectorizeService;
@@ -24,14 +26,21 @@ export class AdvancedRAGAgent extends BaseAgent {
         state.selectedDocId
       );
 
-      state.ragContext = chunks;
+      const sanitizedChunks = chunks
+        .map(c => ({
+          ...c,
+          text: cleanPrintableText(c.text)
+        }))
+        .filter(c => c.text.trim().length > 3);
 
-      const summary = chunks.map(c => `[Page ${c.page} | Score: ${(c.score * 100).toFixed(1)}%]: ${c.text.slice(0, 80)}...`).join('\n');
+      state.ragContext = sanitizedChunks;
+
+      const summary = sanitizedChunks.map(c => `[Page ${c.page} | Score: ${(c.score * 100).toFixed(1)}%]: ${c.text.slice(0, 80)}...`).join('\n');
       
       this.recordThought(
         state, 
-        `Retrieved ${chunks.length} high-confidence vector chunks from document store.`, 
-        { chunksRetrieved: chunks.length, chunksPreview: summary }
+        `Retrieved ${sanitizedChunks.length} high-confidence vector chunks from document store.`, 
+        { chunksRetrieved: sanitizedChunks.length, chunksPreview: summary }
       );
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);

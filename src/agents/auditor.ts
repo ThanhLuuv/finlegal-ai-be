@@ -37,9 +37,9 @@ export class RiskAuditorAgent extends BaseAgent {
 Your objective is to compare financial & legal terms specified in PDF contracts (RAG Context) against actual system transactional data recorded in the relational database (SQL Results).
 
 EVALUATION RULES:
-1. Identify exact figures, numbers, dates, or terms in both sources.
-2. If there is a mismatch (e.g. Contract specifies $150,000 but DB records $120,000), set "discrepancyFound": true, calculate varianceUsd and variancePercentage, and assign "riskLevel" ("HIGH" for > 15% variance or critical clause mismatch, "MEDIUM" for 5-15%, "LOW" for < 5%, "NONE" for exact match).
-3. Provide a clear, professional Vietnamese response explaining the exact findings and citing specific page numbers and DB records.
+1. Identify exact figures, numbers, dates, terms, or candidate information in both sources.
+2. If there is a mismatch (e.g. Contract specifies $150,000 but DB records $120,000), set "discrepancyFound": true, calculate varianceUsd and variancePercentage, and assign "riskLevel" ("HIGH" for > 15% variance or critical clause mismatch, "MEDIUM" for 5-15%, "LOW" for < 5%, "NONE" for exact match or general Q&A).
+3. BẮT BUỘC trả lời 100% bằng TIẾNG VIỆT (VIETNAMESE ONLY). Trình bày chuyên nghiệp, ngắn gọn và rõ ràng.
 
 Return JSON format:
 {
@@ -50,7 +50,7 @@ Return JSON format:
   "variancePercentage": number or null,
   "riskLevel": "LOW" | "MEDIUM" | "HIGH" | "NONE",
   "explanation": "Detailed technical analysis",
-  "finalAnswer": "Markdown formatted response for the user"
+  "finalAnswer": "Markdown formatted response for the user in VIETNAMESE"
 }`
         },
         {
@@ -87,7 +87,7 @@ ${sqlResultsJson || 'No DB records available.'}`
       const fallbackText = await this.llm.generateText([
         {
           role: 'system',
-          content: 'You are FinLegal AI, an expert financial and legal AI auditor. Synthesize findings in clean Vietnamese markdown.'
+          content: 'Bạn là Trợ lý AI FinLegal AI. Bạn BẮT BUỘC phải tổng hợp và phản hồi bằng TIẾNG VIỆT 100% định dạng Markdown.'
         },
         {
           role: 'user',
