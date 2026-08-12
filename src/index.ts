@@ -49,9 +49,9 @@ app.use('*', async (c, next) => {
     return c.json({ error: 'Access denied by Cloudflare Bot Defense.' }, 403);
   }
 
-  // Validate Cloudflare Turnstile Token if secret key is present
-  const secretKey = c.env.TURNSTILE_SECRET_KEY || '0x4AAAAAAENuytTfFf1zhQSPfKLqcDI31mM'; // Production Cloudflare Turnstile Secret Key
-  if (turnstileToken) {
+  // Validate Cloudflare Turnstile Token from Encrypted Worker Environment Variable
+  const secretKey = c.env.TURNSTILE_SECRET_KEY;
+  if (turnstileToken && secretKey) {
     try {
       const formData = new FormData();
       formData.append('secret', secretKey);
