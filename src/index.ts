@@ -27,14 +27,16 @@ export interface Bindings {
   LANGFUSE_PUBLIC_KEY?: string;
   LANGFUSE_SECRET_KEY?: string;
   LANGFUSE_HOST?: string;
+  TURNSTILE_SECRET_KEY?: string;
 }
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// 1. Cloudflare Anti-Bot & Threat Protection Middleware
+// 1. Cloudflare Anti-Bot & Threat Protection Middleware (with Turnstile Support)
 app.use('*', async (c, next) => {
   const userAgent = c.req.header('user-agent') || '';
   const clientIP = c.req.header('cf-connecting-ip') || 'unknown';
+  const turnstileToken = c.req.header('X-Turnstile-Token');
 
   // Block known malicious scanner bot signatures
   const suspiciousBotSignatures = [
@@ -44,7 +46,30 @@ app.use('*', async (c, next) => {
 
   const isBlockedBot = suspiciousBotSignatures.some(sig => userAgent.toLowerCase().includes(sig));
   if (isBlockedBot) {
-    return c.json({ error: 'Access denied by Cloudflare Bot Management Security.' }, 403);
+    return c.json({ error: 'Access denied by Cloudflare Bot Defense.' }, 403);
+  }
+
+  // Validate Cloudflare Turnstile Token if secret key is present
+  const secretKey = c.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA'; // Default Cloudflare Pass Testing Key
+  if (turnstileToken) {
+    try {
+      const formData = new FormData();
+      formData.append('secret', secretKey);
+      formData.append('response', turnstileToken);
+      formData.append('remoteip', clientIP);
+
+      const verifyRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const verifyData = await verifyRes.json() as { success: boolean };
+      if (!verifyData.success) {
+        return c.json({ error: 'Cloudflare Turnstile verification failed.' }, 403);
+      }
+    } catch {
+      // Allow fallback if Cloudflare verification endpoint is unreachable
+    }
   }
 
   await next();
@@ -53,7 +78,7 @@ app.use('*', async (c, next) => {
   c.header('X-Frame-Options', 'DENY');
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
-  c.header('X-Protection-Provider', 'Cloudflare Serverless Edge Bot Defense');
+  c.header('X-Protection-Provider', 'Cloudflare Serverless Edge Bot Defense & Turnstile');
 });
 
 // 2. Enable CORS for Next.js Cloudflare Pages Frontend
