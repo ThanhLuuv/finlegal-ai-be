@@ -52,46 +52,44 @@ export class VectorizeService {
   }
 
   /**
-   * Generates vector embeddings in batch to minimize Worker subrequests.
+   * Generates vector embeddings in parallel batching to prevent HTTP request timeouts.
    */
   public async generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
-    const allEmbeddings: number[][] = [];
-    const batchSize = 20;
-
-    const models = [
-      '@cf/google/embeddinggemma-300m',
-      '@cf/baai/bge-m3',
-      '@cf/baai/bge-base-en-v1.5'
-    ];
+    const batchSize = 25;
+    const batches: string[][] = [];
 
     for (let i = 0; i < texts.length; i += batchSize) {
-      const batchTexts = texts.slice(i, i + batchSize);
-      let batchEmbeddings: number[][] | null = null;
-
-      for (const modelName of models) {
-        try {
-          const res = await (this.ai as any).run(modelName, {
-            text: batchTexts
-          });
-          if (res && res.data) {
-            batchEmbeddings = res.data;
-            break;
-          }
-        } catch {
-          // try next model
-        }
-      }
-
-      if (batchEmbeddings) {
-        allEmbeddings.push(...batchEmbeddings);
-      } else {
-        // Fallback zeroes if all models fail
-        allEmbeddings.push(...batchTexts.map(() => new Array(768).fill(0)));
-      }
+      batches.push(texts.slice(i, i + batchSize));
     }
-    return allEmbeddings;
+
+    const models = [
+      '@cf/baai/bge-base-en-v1.5',
+      '@cf/google/embeddinggemma-300m',
+      '@cf/baai/bge-m3'
+    ];
+
+    // Process all batches in parallel using Promise.all()
+    const batchResults = await Promise.all(
+      batches.map(async (batchTexts) => {
+        for (const modelName of models) {
+          try {
+            const res = await (this.ai as any).run(modelName, { text: batchTexts });
+            if (res && res.data && Array.isArray(res.data)) {
+              return res.data;
+            }
+          } catch {
+            // try next model
+          }
+        }
+        // Fallback dummy zero vectors if models fail
+        return batchTexts.map(() => new Array(768).fill(0));
+      })
+    );
+
+    return batchResults.flat();
   }
+
 
   /**
    * Inserts text chunks with embeddings and metadata into Cloudflare Vectorize.
