@@ -1,4 +1,4 @@
-// Comprehensive, pure JS FlateDecode PDF Text Extractor for Cloudflare Workers Environment
+// Comprehensive, pure JS FlateDecode & CMap PDF Text Extractor for Cloudflare Workers Environment
 
 export function cleanPrintableText(text: string): string {
   if (!text) return '';
@@ -7,6 +7,45 @@ export function cleanPrintableText(text: string): string {
     .replace(/[\x00-\x1F\x7F-\x9F\uFFFD]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Parses ToUnicode CMap blocks in PDF to map glyph hex codes to UTF-8 characters
+ */
+function parseCMap(cmapStr: string): Map<string, string> {
+  const map = new Map<string, string>();
+  
+  // Match bfchar mappings: <0001> <004C>
+  const bfcharRegex = /<([0-9A-Fa-f]+)>\s+<([0-9A-Fa-f]+)>/g;
+  let match: RegExpExecArray | null;
+  while ((match = bfcharRegex.exec(cmapStr)) !== null) {
+    const code = match[1].toUpperCase();
+    const targetHex = match[2];
+    let decodedStr = '';
+    for (let i = 0; i < targetHex.length; i += 4) {
+      const charCode = parseInt(targetHex.substring(i, i + 4), 16);
+      if (!isNaN(charCode) && charCode > 0) {
+        decodedStr += String.fromCharCode(charCode);
+      }
+    }
+    if (decodedStr) map.set(code, decodedStr);
+  }
+
+  // Match bfrange mappings: <0001> <0005> <0041>
+  const bfrangeRegex = /<([0-9A-Fa-f]+)>\s+<([0-9A-Fa-f]+)>\s+<([0-9A-Fa-f]+)>/g;
+  while ((match = bfrangeRegex.exec(cmapStr)) !== null) {
+    const startCode = parseInt(match[1], 16);
+    const endCode = parseInt(match[2], 16);
+    let targetCode = parseInt(match[3], 16);
+    const hexLen = match[1].length;
+
+    for (let c = startCode; c <= endCode; c++) {
+      const hexKey = c.toString(16).padStart(hexLen, '0').toUpperCase();
+      map.set(hexKey, String.fromCharCode(targetCode++));
+    }
+  }
+
+  return map;
 }
 
 async function decompressFlate(bytes: Uint8Array): Promise<Uint8Array | null> {
@@ -23,7 +62,7 @@ async function decompressFlate(bytes: Uint8Array): Promise<Uint8Array | null> {
     const response = new Response(ds.readable);
     const buf = await response.arrayBuffer();
     return new Uint8Array(buf);
-  } catch (e1) {
+  } catch {
     try {
       const ds = new DecompressionStream('deflate');
       const writer = ds.writable.getWriter();
@@ -32,13 +71,13 @@ async function decompressFlate(bytes: Uint8Array): Promise<Uint8Array | null> {
       const response = new Response(ds.readable);
       const buf = await response.arrayBuffer();
       return new Uint8Array(buf);
-    } catch (e2) {
+    } catch {
       return null;
     }
   }
 }
 
-function parseTextFromStreamString(rawString: string): string {
+function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>): string {
   const textBlocks: string[] = [];
   const btRegex = /BT[\s\S]*?ET/g;
   let match: RegExpExecArray | null;
@@ -52,6 +91,24 @@ function parseTextFromStreamString(rawString: string): string {
     while ((tjMatch = tjRegex.exec(block)) !== null) {
       if (tjMatch[1]) {
         const cleaned = cleanPrintableText(tjMatch[1]);
+        if (cleaned.length > 0) textBlocks.push(cleaned);
+      }
+    }
+
+    // Extract hex strings with CMap decoding: <00010002> Tj
+    const hexTjRegex = /<([0-9A-Fa-f\s]+)>\s*Tj/g;
+    let hexTjMatch: RegExpExecArray | null;
+    while ((hexTjMatch = hexTjRegex.exec(block)) !== null) {
+      const hexStr = hexTjMatch[1].replace(/\s+/g, '').toUpperCase();
+      if (cmap && cmap.size > 0) {
+        let decoded = '';
+        for (let i = 0; i < hexStr.length; i += 4) {
+          const chunk = hexStr.substring(i, i + 4);
+          decoded += cmap.get(chunk) || '';
+        }
+        if (decoded.length > 0) textBlocks.push(decoded);
+      } else {
+        const cleaned = cleanPrintableText(hexStr);
         if (cleaned.length > 0) textBlocks.push(cleaned);
       }
     }
@@ -78,9 +135,15 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
   const latin1Decoder = new TextDecoder('latin1');
   const fullLatin1Str = latin1Decoder.decode(bytes);
 
+  // 1. Scan for ToUnicode CMap blocks
+  let globalCMap: Map<string, string> | undefined;
+  if (fullLatin1Str.includes('beginbfrange') || fullLatin1Str.includes('beginbfchar')) {
+    globalCMap = parseCMap(fullLatin1Str);
+  }
+
   const decompressedTextBlocks: string[] = [];
 
-  // Find stream ... endstream positions
+  // 2. Find stream ... endstream positions and decompress FlateStreams
   const streamRegex = /stream[\r\n]+([\s\S]*?)[\r\n]+endstream/g;
   let streamMatch: RegExpExecArray | null;
 
@@ -97,7 +160,14 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
 
       if (decompressed && decompressed.length > 0) {
         const decompressedStr = latin1Decoder.decode(decompressed);
-        const parsedText = parseTextFromStreamString(decompressedStr);
+        
+        // Parse CMap inside decompressed stream if present
+        let streamCMap = globalCMap;
+        if (decompressedStr.includes('beginbfrange') || decompressedStr.includes('beginbfchar')) {
+          streamCMap = parseCMap(decompressedStr);
+        }
+
+        const parsedText = parseTextFromStreamString(decompressedStr, streamCMap);
         if (parsedText && parsedText.length > 3) {
           decompressedTextBlocks.push(parsedText);
         }
@@ -107,15 +177,21 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
 
   if (decompressedTextBlocks.length > 0) {
     const fullText = decompressedTextBlocks.join('\n\n');
-    return cleanPrintableText(fullText);
+    const cleaned = cleanPrintableText(fullText);
+    if (cleaned.length > 10) return cleaned;
   }
 
-  // Fallback: parse uncompressed text blocks
-  const fallbackParsed = parseTextFromStreamString(fullLatin1Str);
+  // 3. Fallback: parse uncompressed text blocks
+  const fallbackParsed = parseTextFromStreamString(fullLatin1Str, globalCMap);
   if (fallbackParsed.length > 10) {
     return cleanPrintableText(fallbackParsed);
   }
 
-  // Ultimate Fallback: clean printable letters & numbers only from raw buffer
+  // 4. Ultimate Fallback: Extract all readable word tokens (lengths >= 2) from PDF string
+  const wordTokens = fullLatin1Str.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [];
+  if (wordTokens.length > 5) {
+    return wordTokens.join(' ');
+  }
+
   return cleanPrintableText(fullLatin1Str);
 }
