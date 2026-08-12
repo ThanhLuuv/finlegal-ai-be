@@ -1,0 +1,21 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify",
+    "typecheck": "tsc --noEmit",
+    "d1:init": "wrangler d1 execute finlegal-db --local --file=./src/db/schema.sql"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20240806.0",
+    "hono": "^4.5.3",
+    "langfuse": "^3.19.0",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "wrangler": "^3.70.0"
+  }
+}
