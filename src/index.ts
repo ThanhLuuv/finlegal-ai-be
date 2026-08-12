@@ -163,15 +163,7 @@ app.post('/api/upload', async (c) => {
     }
 
     if (!textContent || textContent.trim().length === 0) {
-      // Fallback sample enterprise contract text if binary parsing needs plain text
-      textContent = `HỢP ĐỒNG MUA BÁN HÀNG HÓA - CTR-2024-001
-Bên A: Acme Corporation
-Bên B: GlobalTech Industries
-Thời hạn: Năm 2024
-Điều khoản Doanh thu:
-Quy định doanh thu ghi nhận Q1-2024: $150,000.00 USD.
-Quy định doanh thu ghi nhận Q2-2024: $120,000.00 USD.
-Tổng giá trị hợp đồng năm 2024: $270,000.00 USD.`;
+      return c.json({ error: 'Không thể đọc hoặc trích xuất nội dung văn bản từ tập tin đã chọn.' }, 400);
     }
 
     const docId = `doc_${Date.now()}`;
