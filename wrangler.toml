@@ -18,26 +18,6 @@ index_name = "finlegal-vectors"
 # Cloudflare R2 Object Storage
 [[r2_buckets]]
 binding = "R2"
-name = "finlegal-backend"
-account_id = "78eede6ec04d52fe8b367f14cecb7c08"
-main = "src/index.ts"
-compatibility_date = "2024-08-01"
-compatibility_flags = ["nodejs_compat"]
-
-# Cloudflare D1 Relational SQL Database
-[[d1_databases]]
-binding = "DB"
-database_name = "finlegal-db"
-database_id = "64ddf6c2-2062-49cf-9e31-6d6955fdede5"
-
-# Cloudflare Vectorize Native Vector Store
-[[vectorize]]
-binding = "VECTORIZE"
-index_name = "finlegal-vectors"
-
-# Cloudflare R2 Object Storage
-[[r2_buckets]]
-binding = "R2"
 bucket_name = "finlegal-docs"
 
 # Cloudflare Workers AI Binding
