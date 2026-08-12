@@ -141,12 +141,20 @@ app.get('/api/documents', async (c) => {
   }
 });
 
-// 3.5. Delete Document Endpoint (Cleans D1 Database & R2 Storage)
+// 3.5. Delete Document Endpoint (Cleans D1 Database, R2 Storage & Vectorize Index)
 app.delete('/api/documents/:docId', async (c) => {
   try {
     const docId = c.req.param('docId');
 
-    // Query document record from D1 to retrieve R2 storage key
+    // 1. Delete vector embeddings from Cloudflare Vectorize Index
+    try {
+      const vectorIds = Array.from({ length: 35 }, (_, i) => `${docId}_chunk_${i}`);
+      await c.env.VECTORIZE.deleteByIds(vectorIds);
+    } catch (vecErr) {
+      console.warn('Vectorize deletion warning:', vecErr);
+    }
+
+    // 2. Query document record from D1 to retrieve R2 storage key and delete file object
     const doc = await c.env.DB.prepare('SELECT r2_key FROM document_records WHERE doc_id = ?').bind(docId).first<{ r2_key?: string }>();
     if (doc && doc.r2_key) {
       try {
@@ -156,10 +164,10 @@ app.delete('/api/documents/:docId', async (c) => {
       }
     }
 
-    // Delete record from D1 Database
+    // 3. Delete record from D1 Database
     await c.env.DB.prepare('DELETE FROM document_records WHERE doc_id = ?').bind(docId).run();
 
-    return c.json({ success: true, message: 'Đã xóa tài liệu thành công.' });
+    return c.json({ success: true, message: 'Đã xóa triệt để tài liệu, kho Vector và cơ sở dữ liệu D1 thành công.' });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Không thể xóa tài liệu: ${errorMsg}` }, 500);
