@@ -96,11 +96,19 @@ export class VectorizeService {
   ): Promise<RagContextChunk[]> {
     const queryVector = await this.generateEmbedding(queryText);
 
-    const matches = await this.vectorize.query(queryVector, {
+    let matches = await this.vectorize.query(queryVector, {
       topK,
       filter: selectedDocId ? { docId: selectedDocId } : undefined,
       returnMetadata: 'all'
     });
+
+    // Fallback: If filtered docId search yields 0 matches, search all vector indexes
+    if ((!matches || !matches.matches || matches.matches.length === 0) && selectedDocId) {
+      matches = await this.vectorize.query(queryVector, {
+        topK,
+        returnMetadata: 'all'
+      });
+    }
 
     if (!matches || !matches.matches) {
       return [];

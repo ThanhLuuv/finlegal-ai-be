@@ -289,7 +289,10 @@ app.post('/api/chat/stream', async (c) => {
       } else {
         // General Chat
         const generalReply = await llm.generateText([
-          { role: 'system', content: 'You are FinLegal AI, an enterprise financial & legal AI assistant.' },
+          { 
+            role: 'system', 
+            content: 'Bạn là Trợ lý AI FinLegal AI chuyên phân tích Hợp đồng và Đối soát Số liệu Bán hàng Doanh nghiệp. Bạn BẮT BUỘC phải trả lời bằng Tiếng Việt 100%, lịch sự, chuyên nghiệp và ngắn gọn.' 
+          },
           { role: 'user', content: prompt }
         ]);
         state.finalAnswer = generalReply;
