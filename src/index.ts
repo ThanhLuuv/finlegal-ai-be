@@ -31,10 +31,35 @@ export interface Bindings {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// Enable CORS for Next.js Cloudflare Pages Frontend
+// 1. Cloudflare Anti-Bot & Threat Protection Middleware
+app.use('*', async (c, next) => {
+  const userAgent = c.req.header('user-agent') || '';
+  const clientIP = c.req.header('cf-connecting-ip') || 'unknown';
+
+  // Block known malicious scanner bot signatures
+  const suspiciousBotSignatures = [
+    'sqlmap', 'nikto', 'nmap', 'masscan', 'zgrab', 
+    'eval-at-log', 'dirbuster', 'gobuster', 'python-urllib'
+  ];
+
+  const isBlockedBot = suspiciousBotSignatures.some(sig => userAgent.toLowerCase().includes(sig));
+  if (isBlockedBot) {
+    return c.json({ error: 'Access denied by Cloudflare Bot Management Security.' }, 403);
+  }
+
+  await next();
+
+  // Attach Enterprise Security Headers
+  c.header('X-Frame-Options', 'DENY');
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('X-Protection-Provider', 'Cloudflare Serverless Edge Bot Defense');
+});
+
+// 2. Enable CORS for Next.js Cloudflare Pages Frontend
 app.use('*', cors({
   origin: '*',
-  allowHeaders: ['Content-Type', 'Authorization'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Turnstile-Token'],
   allowMethods: ['GET', 'POST', 'OPTIONS'],
 }));
 
