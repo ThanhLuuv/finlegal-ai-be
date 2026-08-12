@@ -64,28 +64,49 @@ export class LLMProviderService {
   }
 
   /**
-   * Generates structured JSON output from LLM prompt.
+   * Generates structured JSON output from LLM prompt with robust parsing and recovery.
    */
   public async generateJSON<T>(messages: LLMMessage[], options: LLMOptions = {}): Promise<T> {
     const systemPrompt: LLMMessage = {
       role: 'system',
-      content: 'CRITICAL REQUIREMENT: You MUST respond ONLY with valid, minified raw JSON. Do NOT include markdown codeblocks (```json), commentary, or extra whitespace.'
+      content: 'CRITICAL REQUIREMENT: You MUST respond ONLY with valid raw JSON. Do NOT wrap in markdown codeblocks (```json) or include extra commentary.'
     };
 
     const fullMessages = [systemPrompt, ...messages];
     const rawText = await this.generateText(fullMessages, { ...options, temperature: 0.0 });
     
-    // Clean up codeblock markers if model accidentally includes them
-    const cleaned = rawText
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
+    let cleaned = rawText.trim();
+
+    // 1. Extract JSON object or array substring using regex boundary matching
+    const firstBrace = cleaned.search(/[\{\[]/);
+    const lastBrace = Math.max(cleaned.lastIndexOf('}'), cleaned.lastIndexOf(']'));
+
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
+
+    // 2. Sanitize common LLM syntax flaws (trailing commas before } or ])
+    cleaned = cleaned
+      .replace(/,\s*([\}\]])/g, '$1')
+      .replace(/\/\/.*$/gm, '')
+      .replace(/```json/gi, '')
+      .replace(/```/g, '')
       .trim();
 
     try {
       return JSON.parse(cleaned) as T;
     } catch (parseError) {
-      console.error('Failed to parse LLM JSON output:', cleaned);
+      // 3. Fallback: regex search for object pattern
+      const jsonMatch = rawText.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+      if (jsonMatch) {
+        try {
+          const fallbackCleaned = jsonMatch[0].replace(/,\s*([\}\]])/g, '$1');
+          return JSON.parse(fallbackCleaned) as T;
+        } catch {
+          // ignore
+        }
+      }
+      console.error('Failed to parse LLM JSON output. Raw text was:', rawText);
       throw new Error(`LLM JSON Parse Error: Invalid JSON response received from LLM.`);
     }
   }
