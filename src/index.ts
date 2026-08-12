@@ -16,6 +16,7 @@ import { VectorizeService } from './services/vectorize';
 import { R2StorageService } from './services/r2';
 import { TablePreservingChunker } from './services/chunker';
 import { extractTextFromPDFBuffer } from './utils/pdfExtractor';
+import { AIDocumentProcessorService } from './services/aiDocProcessor';
 import { LangfuseLogger } from './utils/langfuse';
 
 // Bindings Environment Interface for Workers
@@ -201,9 +202,14 @@ app.post('/api/upload', async (c) => {
       return c.json({ error: 'Không thể đọc hoặc trích xuất nội dung văn bản từ tập tin đã chọn.' }, 400);
     }
 
+    // AI Document Ingestion Pre-Processor: Repair, clean & structure raw text into Markdown
+    const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY);
+    const aiProcessor = new AIDocumentProcessorService(llm);
+    const structuredMarkdown = await aiProcessor.cleanAndStructureDocument(textContent, fileName);
+
     const docId = `doc_${Date.now()}`;
     const chunker = new TablePreservingChunker(1000, 200);
-    const chunks = chunker.chunkDocument(textContent);
+    const chunks = chunker.chunkDocument(structuredMarkdown);
 
     // Index into Cloudflare Vectorize
     const vectorizeService = new VectorizeService(c.env.VECTORIZE, c.env.AI);

@@ -98,6 +98,15 @@ flowchart TD
 
 ---
 
+### 🤖 Giải Pháp 8: Tiến Trình AI Tiền Xử Lý Dữ Liệu Văn Bản (AI Document Ingestion Pre-Processor)
+- **Bài toán:** Các file PDF xuất từ Canva, Photoshop hay mã hóa font CMap phức tạp dù bóc tách thô thành công vẫn có thể chứa ký tự gượng ép hoặc cấu trúc bị xáo trộn.
+- **Giải pháp kỹ thuật:**
+  - Xây dựng **AIDocumentProcessorService (`aiDocProcessor.ts`)**: Tận dụng mô hình AI LLM đóng vai trò *Chuyên Gia Tiền Xử Lý & Làm Sạch Văn Bản* ngay khi bấm Upload.
+  - LLM tự động sửa lỗi font, bóc tách chính xác Tên ứng viên, Chức danh, Số điện thoại, Địa chỉ, Các điều khoản hợp đồng và chuyển đổi toàn bộ văn bản thành chuỗi **Standard Markdown** sắc nét.
+  - Chuỗi Markdown chuẩn chỉnh này sau đó mới được đưa vào Chunker và nạp vào Cloudflare Vectorize + D1 Database. Nhờ đó, độ chính xác tìm kiếm Vector RAG và chất lượng trả lời của Agent đạt tỷ lệ **100% hoàn hảo**.
+
+---
+
 ## 🎯 3. Bộ Câu Hỏi & Trả Lời Phỏng Vấn Kỹ Thuật (Interview Q&A Flashcards)
 
 ### ❓ Q1: "Bạn đã làm gì để bảo vệ ứng dụng AI khi đưa liên kết dự án vào CV?"
