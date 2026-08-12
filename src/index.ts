@@ -15,6 +15,7 @@ import { D1DatabaseService } from './services/d1';
 import { VectorizeService } from './services/vectorize';
 import { R2StorageService } from './services/r2';
 import { TablePreservingChunker } from './services/chunker';
+import { extractTextFromPDFBuffer } from './utils/pdfExtractor';
 import { LangfuseLogger } from './utils/langfuse';
 
 // Bindings Environment Interface for Workers
@@ -179,9 +180,8 @@ app.post('/api/upload', async (c) => {
       const docId = `doc_${Date.now()}`;
       await c.env.R2.put(`documents/${docId}/${fileName}`, arrayBuffer);
 
-      // Convert buffer text or extraction
-      const textDecoder = new TextDecoder('utf-8');
-      textContent = textDecoder.decode(arrayBuffer);
+      // Extract clean readable text from PDF binary buffer using custom worker parser
+      textContent = extractTextFromPDFBuffer(arrayBuffer);
     } else if (typeof formData['text'] === 'string') {
       textContent = formData['text'];
       fileName = (formData['fileName'] as string) || 'text_contract.txt';
