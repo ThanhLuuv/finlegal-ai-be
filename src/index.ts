@@ -243,6 +243,35 @@ app.post('/api/chat/stream', async (c) => {
     return c.json({ error: 'Prompt is required' }, 400);
   }
 
+  // IP Rate Limiting Check (CV Protection: 5 Requests / 10 Minutes per IP)
+  const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '127.0.0.1';
+  const now = Date.now();
+  const WINDOW_MS = 10 * 60 * 1000; // 10 minutes window
+  const MAX_REQUESTS = 5; // 5 requests max limit
+
+  try {
+    const record = await c.env.DB.prepare('SELECT request_count, reset_at FROM ip_rate_limits WHERE ip = ?').bind(clientIp).first<{ request_count: number; reset_at: number }>();
+    if (record) {
+      if (now > record.reset_at) {
+        // Window expired -> Reset count
+        await c.env.DB.prepare('UPDATE ip_rate_limits SET request_count = 1, reset_at = ? WHERE ip = ?').bind(now + WINDOW_MS, clientIp).run();
+      } else if (record.request_count >= MAX_REQUESTS) {
+        const minutesLeft = Math.ceil((record.reset_at - now) / 60000);
+        return c.json({ 
+          error: `⚠️ Hệ thống bảo vệ tự động: Địa chỉ IP của bạn đã dùng hết 5 lượt hỏi trong 10 phút để tránh rủi ro spam. Vui lòng quay lại sau ${minutesLeft} phút!` 
+        }, 429);
+      } else {
+        // Increment count
+        await c.env.DB.prepare('UPDATE ip_rate_limits SET request_count = request_count + 1 WHERE ip = ?').bind(clientIp).run();
+      }
+    } else {
+      // First request from this IP
+      await c.env.DB.prepare('INSERT INTO ip_rate_limits (ip, request_count, reset_at) VALUES (?, 1, ?)').bind(clientIp, now + WINDOW_MS).run();
+    }
+  } catch (rateErr) {
+    console.warn('Rate limiting check warning:', rateErr);
+  }
+
   // Initialize Services
   const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY);
   const d1Service = new D1DatabaseService(c.env.DB);
