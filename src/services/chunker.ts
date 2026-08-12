@@ -18,9 +18,31 @@ export class TablePreservingChunker {
 
   /**
    * Chunks raw document text into semantically cohesive, table-preserved chunks.
+   * Guarantees that no single chunk ever exceeds 1000 characters.
    */
   public chunkDocument(rawText: string, defaultPage = 1): ChunkOutput[] {
-    const lines = rawText.split('\n');
+    // Normalize newlines and break long single-line blocks into 500-char paragraphs
+    const paragraphs = rawText
+      .replace(/\r/g, '')
+      .split('\n')
+      .flatMap(line => {
+        if (line.length <= this.maxChunkSize) return [line];
+        // Split long un-newline text by spaces or periods into sub-lines
+        const subLines: string[] = [];
+        let curr = '';
+        const words = line.split(' ');
+        for (const w of words) {
+          if ((curr + ' ' + w).length > 600) {
+            subLines.push(curr.trim());
+            curr = w;
+          } else {
+            curr += (curr ? ' ' : '') + w;
+          }
+        }
+        if (curr.trim().length > 0) subLines.push(curr.trim());
+        return subLines;
+      });
+
     const chunks: ChunkOutput[] = [];
     let currentChunkLines: string[] = [];
     let currentChunkSize = 0;
@@ -28,22 +50,20 @@ export class TablePreservingChunker {
     let tableHeaderLines: string[] = [];
     let chunkIndex = 0;
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    for (let i = 0; i < paragraphs.length; i++) {
+      const line = paragraphs[i];
       const isTableLine = line.trim().startsWith('|') && line.trim().endsWith('|');
 
       if (isTableLine) {
         if (!inTable) {
           inTable = true;
           tableHeaderLines = [line];
-          // If next line is separator (|---|---|), grab it too as header
-          if (i + 1 < lines.length && lines[i + 1].trim().startsWith('|') && lines[i + 1].includes('-')) {
-            tableHeaderLines.push(lines[i + 1]);
+          if (i + 1 < paragraphs.length && paragraphs[i + 1].trim().startsWith('|') && paragraphs[i + 1].includes('-')) {
+            tableHeaderLines.push(paragraphs[i + 1]);
             i++;
           }
         }
 
-        // Attach header lines to current chunk if not already present
         if (currentChunkLines.length === 0 && tableHeaderLines.length > 0) {
           currentChunkLines.push(...tableHeaderLines);
           currentChunkSize += tableHeaderLines.join('\n').length;
@@ -53,7 +73,6 @@ export class TablePreservingChunker {
         currentChunkSize += line.length + 1;
       } else {
         if (inTable) {
-          // Table ended
           inTable = false;
           tableHeaderLines = [];
         }
@@ -62,20 +81,18 @@ export class TablePreservingChunker {
         currentChunkSize += line.length + 1;
       }
 
-      // Flush chunk if size limit reached or at end of text
-      if (currentChunkSize >= this.maxChunkSize || i === lines.length - 1) {
+      if (currentChunkSize >= this.maxChunkSize || i === paragraphs.length - 1) {
         if (currentChunkLines.length > 0) {
           const chunkText = currentChunkLines.join('\n').trim();
           if (chunkText.length > 0) {
             chunks.push({
-              text: chunkText,
+              text: chunkText.slice(0, 1000), // Hard safety cap to 1000 chars
               chunkIndex: chunkIndex++,
               pageNumber: defaultPage,
               containsTable: chunkText.includes('|') && chunkText.split('\n').some(l => l.trim().startsWith('|')),
             });
           }
 
-          // Prepare overlap for next chunk
           const overlapLines = this.calculateOverlapLines(currentChunkLines);
           currentChunkLines = inTable && tableHeaderLines.length > 0 ? [...tableHeaderLines, ...overlapLines] : overlapLines;
           currentChunkSize = currentChunkLines.join('\n').length;

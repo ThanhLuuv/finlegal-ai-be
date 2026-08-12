@@ -73,7 +73,7 @@ export class VectorizeService {
         fileName,
         pageNumber: chunk.pageNumber,
         chunkIndex: chunk.chunkIndex,
-        text: chunk.text,
+        text: chunk.text.slice(0, 1000),
         containsTable: chunk.containsTable
       }
     }));
