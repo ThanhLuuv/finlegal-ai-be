@@ -187,8 +187,14 @@ app.get('/api/admin/logs', async (c) => {
 // 4. PDF Document Upload, Chunking & Vector Ingestion Endpoint
 app.post('/api/upload', async (c) => {
   try {
-    const formData = await c.req.parseBody();
-    const file = formData['file'];
+    let formData: any;
+    try {
+      formData = await c.req.formData();
+    } catch {
+      formData = await c.req.parseBody();
+    }
+
+    const file = formData.get ? formData.get('file') : formData['file'];
     let textContent = '';
     let fileName = 'document.pdf';
 
@@ -201,14 +207,15 @@ app.post('/api/upload', async (c) => {
 
       // Extract clean readable text from PDF binary buffer using custom worker parser
       textContent = await extractTextFromPDFBuffer(arrayBuffer);
-    } else if (typeof formData['text'] === 'string') {
-      textContent = formData['text'];
-      fileName = (formData['fileName'] as string) || 'text_contract.txt';
+    } else if (typeof formData['text'] === 'string' || (formData.get && typeof formData.get('text') === 'string')) {
+      textContent = typeof formData['text'] === 'string' ? formData['text'] : formData.get('text');
+      fileName = (formData['fileName'] as string) || (formData.get && formData.get('fileName')) || 'text_contract.txt';
     }
 
     if (!textContent || textContent.trim().length === 0) {
       return c.json({ error: 'Không thể đọc hoặc trích xuất nội dung văn bản từ tập tin đã chọn.' }, 400);
     }
+
 
     // AI Document Ingestion Pre-Processor: Repair, clean & structure raw text into Markdown
     const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY);

@@ -11,20 +11,12 @@ export function cleanPrintableText(text: string): string {
 
 /**
  * Checks if extracted text is pure binary noise.
- * Relaxed to ensure Vietnamese text with accents and numbers isn't falsely discarded.
  */
 export function isBinaryNoise(text: string): boolean {
   if (!text || text.trim().length < 4) return true;
-  
-  // Count valid word characters (including Vietnamese Unicode)
   const validChars = text.match(/[A-Za-z0-9À-ỹ\s\.,:\-\(\)\/\$]/g) || [];
   const validRatio = validChars.length / text.length;
-  
-  // If at least 60% of characters are printable letters/numbers/punctuation, it is valid text
-  if (validRatio < 0.5) {
-    return true;
-  }
-  return false;
+  return validRatio < 0.4;
 }
 
 /**
@@ -97,11 +89,16 @@ async function decompressFlate(bytes: Uint8Array): Promise<Uint8Array | null> {
 
 function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>): string {
   const textBlocks: string[] = [];
-  const btRegex = /BT[\s\S]*?ET/g;
-  let match: RegExpExecArray | null;
 
-  while ((match = btRegex.exec(rawString)) !== null) {
-    const block = match[0];
+  // Fast linear scanning for BT ... ET blocks without regex backtracking
+  let pos = 0;
+  while (pos < rawString.length) {
+    const btIdx = rawString.indexOf('BT', pos);
+    if (btIdx === -1) break;
+    const etIdx = rawString.indexOf('ET', btIdx + 2);
+    if (etIdx === -1) break;
+
+    const block = rawString.substring(btIdx, etIdx + 2);
     
     // Extract literal strings: (Hello World) Tj
     const tjRegex = /\(([\s\S]*?)\)\s*Tj/g;
@@ -131,7 +128,7 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
       }
     }
 
-    // Extract array strings: [(Hello) -10 (World)] TJ or [<0001> -10 <0002>] TJ
+    // Extract array strings: [(Hello) -10 (World)] TJ
     const tjArrayRegex = /\[([\s\S]*?)\]\s*TJ/g;
     let tjArrayMatch: RegExpExecArray | null;
     while ((tjArrayMatch = tjArrayRegex.exec(block)) !== null) {
@@ -156,6 +153,8 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
         if (decodedStr.length > 0) textBlocks.push(decodedStr);
       }
     }
+
+    pos = etIdx + 2;
   }
 
   return textBlocks.join(' ');
@@ -179,19 +178,21 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
 
   const decompressedTextBlocks: string[] = [];
 
-  // 2. Find stream ... endstream positions and decompress FlateStreams
-  const streamRegex = /stream[\r\n]+([\s\S]*?)[\r\n]+endstream/g;
-  let streamMatch: RegExpExecArray | null;
+  // 2. Find stream ... endstream positions via linear indexOf search (Zero Regex Backtracking)
+  let searchPos = 0;
+  while (searchPos < fullLatin1Str.length) {
+    const streamIdx = fullLatin1Str.indexOf('stream', searchPos);
+    if (streamIdx === -1) break;
 
-  while ((streamMatch = streamRegex.exec(fullLatin1Str)) !== null) {
-    const streamContentStart = streamMatch.index + streamMatch[0].indexOf('stream') + 6;
-    let startOffset = streamContentStart;
+    const endStreamIdx = fullLatin1Str.indexOf('endstream', streamIdx + 6);
+    if (endStreamIdx === -1) break;
+
+    let startOffset = streamIdx + 6;
     if (bytes[startOffset] === 13) startOffset++; // \r
     if (bytes[startOffset] === 10) startOffset++; // \n
 
-    const endOffset = streamMatch.index + streamMatch[0].lastIndexOf('endstream');
-    if (endOffset > startOffset) {
-      const streamBytes = bytes.subarray(startOffset, endOffset);
+    if (endStreamIdx > startOffset) {
+      const streamBytes = bytes.subarray(startOffset, endStreamIdx);
       const decompressed = await decompressFlate(streamBytes);
 
       if (decompressed && decompressed.length > 0) {
@@ -213,6 +214,8 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
         }
       }
     }
+
+    searchPos = endStreamIdx + 9;
   }
 
   if (decompressedTextBlocks.length > 0) {
@@ -230,4 +233,5 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
   // 4. Return valid words text from PDF buffer
   return validWordsText.length > 10 ? validWordsText : cleanPrintableText(fullLatin1Str);
 }
+
 
