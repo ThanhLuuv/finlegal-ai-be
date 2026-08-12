@@ -24,8 +24,9 @@ bucket_name = "finlegal-docs"
 [ai]
 binding = "AI"
 
-# Environment Variables & Secrets
+# Environment Variables & Non-sensitive Config
 [vars]
 ENVIRONMENT = "production"
 LANGFUSE_HOST = "https://cloud.langfuse.com"
-TURNSTILE_SECRET_KEY = "0x4AAAAAAENuytTfFf1zhQSPfKLqcDI31mM"
+
+

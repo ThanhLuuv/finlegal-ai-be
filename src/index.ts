@@ -26,6 +26,7 @@ export interface Bindings {
   R2: R2Bucket;
   AI: Ai;
   GEMINI_API_KEY?: string;
+  OPENAI_API_KEY?: string;
   LANGFUSE_PUBLIC_KEY?: string;
   LANGFUSE_SECRET_KEY?: string;
   LANGFUSE_HOST?: string;
@@ -197,16 +198,22 @@ app.post('/api/upload', async (c) => {
     const file = formData.get ? formData.get('file') : formData['file'];
     let textContent = '';
     let fileName = 'document.pdf';
+  const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY, c.env.OPENAI_API_KEY);
 
     if (file && typeof file !== 'string' && 'arrayBuffer' in file) {
       fileName = file.name || 'contract_document.pdf';
       const arrayBuffer = await file.arrayBuffer();
-      // Store raw file in R2 Storage
       const docId = `doc_${Date.now()}`;
       await c.env.R2.put(`documents/${docId}/${fileName}`, arrayBuffer);
 
-      // Extract clean readable text from PDF binary buffer using custom worker parser
-      textContent = await extractTextFromPDFBuffer(arrayBuffer);
+      // Primary: Modern Multimodal AI Document Parsing (Gemini 2.0 Flash / 1.5 Flash)
+      const multimodalText = await llm.processMultimodalDocument(arrayBuffer, fileName);
+      if (multimodalText && multimodalText.trim().length > 20) {
+        textContent = multimodalText;
+      } else {
+        // Fallback: Worker text extraction
+        textContent = await extractTextFromPDFBuffer(arrayBuffer);
+      }
     } else if (typeof formData['text'] === 'string' || (formData.get && typeof formData.get('text') === 'string')) {
       textContent = typeof formData['text'] === 'string' ? formData['text'] : formData.get('text');
       fileName = (formData['fileName'] as string) || (formData.get && formData.get('fileName')) || 'text_contract.txt';
@@ -216,13 +223,11 @@ app.post('/api/upload', async (c) => {
       return c.json({ error: 'Không thể đọc hoặc trích xuất nội dung văn bản từ tập tin đã chọn.' }, 400);
     }
 
-
-    // AI Document Ingestion Pre-Processor: Repair, clean & structure raw text into Markdown
-    const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY);
     const aiProcessor = new AIDocumentProcessorService(llm);
     const structuredMarkdown = await aiProcessor.cleanAndStructureDocument(textContent, fileName);
 
     const docId = `doc_${Date.now()}`;
+
     const chunker = new TablePreservingChunker(1000, 200);
     const chunks = chunker.chunkDocument(structuredMarkdown);
 
@@ -294,7 +299,7 @@ app.post('/api/chat/stream', async (c) => {
   }
 
   // Initialize Services
-  const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY);
+  const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY, c.env.OPENAI_API_KEY);
   const d1Service = new D1DatabaseService(c.env.DB);
   const vectorizeService = new VectorizeService(c.env.VECTORIZE, c.env.AI);
   const langfuse = new LangfuseLogger(c.env.LANGFUSE_PUBLIC_KEY, c.env.LANGFUSE_SECRET_KEY, c.env.LANGFUSE_HOST);
