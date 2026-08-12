@@ -1,134 +1,117 @@
-# 📘 FinLegal AI - Tài Liệu Kiến Trúc Hệ Thống & Bộ Thẻ Trả Lời Phỏng Vấn (System Architecture & Interview Guide)
+# 📘 FinLegal AI - Tài Liệu Giải Pháp Công Nghệ & Kiến Trúc Hệ Thống (Technical Architecture & Solutions Mastery)
 
-> **Dành cho Người Học/Ứng Viên:** Tài liệu này được thiết kế theo ngôn ngữ dễ hiểu nhất, đi kèm ẩn dụ đời thực và bộ câu hỏi phỏng vấn thực chiến giúp bạn nắm chắc 100% bản chất hệ thống FinLegal AI để tự tin trả lời bất kỳ nhà tuyển dụng nào.
+> **Dành cho Người Học & Nhà Tuyển Dụng:** Tài liệu này trình bày chi tiết toàn bộ các **Giải Pháp Công Nghệ Chuyên Sâu (Technical Solutions)** được xây dựng trong dự án FinLegal AI, bao gồm Bảo vệ chống Spam, Tracing Logs tự xây, Bóc tách PDF FlateDecode, Multi-Agent RAG và Hạ tầng Cloudflare Serverless Edge.
 
 ---
 
-## 💡 1. Giải Thích Khái Niệm Dễ Hiểu Nhất (Real-world Analogies)
-
-### A. RAG (Retrieval-Augmented Generation) là gì?
-- **Ẩn dụ đời thực:** Giống như một học sinh đi thi được **Mở Sách Tra Cứu**.
-- **Cách cũ (Không dùng RAG):** Bắt AI học thuộc lòng toàn bộ văn bản. Khi văn bản cập nhật hoặc có hợp đồng mới, AI không biết hoặc bị hiện tượng "Ảo giác" (nói mò, bịa ra thông tin).
-- **Cách dùng RAG (Hệ thống của chúng ta):** AI **KHÔNG CẦN HỌC THUỘC**. Mỗi khi người dùng hỏi, hệ thống sẽ:
-  1. **Retrieval (Tra cứu):** Mở kho tài liệu, rút ra đúng 3 - 5 đoạn văn bản liên quan nhất.
-  2. **Augmented (Bổ sung context):** Kèm các đoạn văn bản đó vào câu hỏi của người dùng.
-  3. **Generation (Sinh phản hồi):** Đưa cho AI đọc và tổng hợp câu trả lời chuẩn xác 100%.
-
-### B. Kiến Trúc Đa Tác Vụ (Multi-Agent Architecture) là gì?
-- **Ẩn dụ đời thực:** Giống như một **Phòng Kiểm Toán Tài Chính Doanh Nghiệp** gồm 4 chuyên gia phối hợp:
+## 💡 1. Tổng Quan Các Giải Pháp Công Nghệ Đã Triển Khai (Core Tech Solutions)
 
 ```mermaid
 flowchart TD
-    User([Người Dùng Hỏi: Đối soát doanh thu CTR-2024-001]) --> Supervisor[1. Supervisor Agent - Trưởng Phòng Điều Phối]
+    User([Người Dùng / Nhà Tuyển Dụng]) --> SecurityGate[1. Security & Anti-Bot Gate\nCloudflare Turnstile]
+    SecurityGate --> RateLimiter[2. IP Rate Limiter Middleware\n5 reqs / 10 mins per IP]
     
-    Supervisor -->|Phân tích Yêu cầu| Router{Routing Ý Định}
+    RateLimiter --> API[3. Hono.js Serverless Edge Engine\nCloudflare Workers]
     
-    Router -->|Tra cứu câu chữ Hợp đồng| RAG[2. RAG Agent - Chuyên Viên Pháp Lý]
-    Router -->|Truy vấn số liệu thực tế| SQL[3. SQL Tool Agent - Chuyên Viên Dữ Liệu]
+    subgraph Multi-Agent RAG Core
+        API --> Supervisor[Supervisor Agent\nIntent Routing & RAG Override]
+        Supervisor --> RAG[Advanced RAG Agent]
+        Supervisor --> SQL[SQL Tool Agent]
+        
+        RAG --> PDFEngine[4. PDF FlateDecode Stream Extractor\nDecompressionStream + UTF-8 Sanitizer]
+        PDFEngine --> Vectorize[(Cloudflare Vectorize\nMetadata capped at 1KB)]
+        SQL --> D1[(Cloudflare D1 SQL DB)]
+        
+        RAG --> Auditor[Risk Auditor Agent\nVietnamese Synthesis & Cross-Check]
+        SQL --> Auditor
+    end
     
-    RAG -->|Trích xuất văn bản PDF| Vectorize[(Kho Vector - Vectorize)]
-    SQL -->|Truy vấn SQL D1| D1[(Cơ sở dữ liệu D1)]
+    API --> SSE[5. SSE Event Streamer\nReal-time Thought Process]
+    API --> InternalLog[6. Custom Internal Tracing System\nD1 chat_logs Table]
     
-    RAG --> Auditor[4. Risk Auditor Agent - Giám Đốc Kiểm Toán]
-    SQL --> Auditor
-    
-    Auditor -->|So sánh & Phát hiện sai lệch| Report[Báo Cáo Kiểm Toán AuditCard & Trả Lời]
+    SSE --> FE[Frontend Next.js App\n100% Light Minimal Theme]
+    InternalLog --> AdminModal[7. Tracing Logs Dashboard\nAdminLogModal Component]
 ```
 
-1. 🕵️‍♂️ **Supervisor Agent (Trưởng phòng Điều phối):** Đọc câu hỏi người dùng, phân tích xem câu hỏi này cần tra hợp đồng PDF (RAG), cần truy vấn số liệu DB (SQL), hay cần cả hai (Hybrid).
-2. 📄 **Advanced RAG Agent (Chuyên viên Pháp lý):** Tìm kiếm câu chữ, điều khoản ghi nhận doanh thu trong các file PDF Hợp đồng đã tải lên.
-3. 📊 **SQL Tool Agent (Chuyên viên Dữ liệu):** Tự động soi cấu trúc Database và viết câu lệnh SQL để lấy số liệu doanh thu thực tế ghi nhận trong hệ thống D1.
-4. ⚖️ **Risk Auditor Agent (Giám đốc Kiểm toán):** So sánh con số trong Hợp đồng PDF với con số thực tế trong Database SQL. Nếu phát hiện sai lệch (ví dụ: Hợp đồng ghi $150,000 nhưng DB ghi $120,000), lập tức tính tỷ lệ % lệch và cảnh báo Rủi ro Rất Cao (HIGH RISK)!
+---
+
+## 🛠️ 2. Chi Tiết 7 Giải Pháp Công Nghệ Chuyên Sâu (In-Depth Technical Solutions)
+
+### 🔒 Giải Pháp 1: Giới Hạn Tần Suất Truy Cập (IP Rate Limiting Middleware)
+- **Bài toán:** Bảo vệ tài khoản Cloudflare & API Key khỏi rủi ro bị Bot tự động Spam hay tấn công DDoS khi công khai link ứng dụng trên CV/Resume.
+- **Giải pháp kỹ thuật:**
+  - Đọc địa chỉ IP thực tế của người dùng từ header mạng Edge của Cloudflare: `c.req.header('cf-connecting-ip')`.
+  - Thiết lập bảng `ip_rate_limits` trong Cloudflare D1 Database.
+  - Áp dụng cơ chế **Sliding Window 10 phút**: Cho phép tối đa **5 câu hỏi / 10 phút / IP**.
+  - Nếu vượt quá 5 câu, hệ thống ngắt ngay từ mạng Edge và trả về mã lỗi HTTP `429 Too Many Requests` kèm thông báo lịch sự bằng Tiếng Việt.
 
 ---
 
-## 🚀 2. Ngăn Xếp Công Nghệ & Lý Do Chọn (Tech Stack & Justifications)
-
-| Thành Phần | Công Nghệ Sử Dụng | Lý Do Lựa Chọn (Trả lời Phỏng vấn) |
-| :--- | :--- | :--- |
-| **Frontend** | **Next.js 14 (React)** | Framework hiện đại nhất, hỗ trợ Render giao diện nhanh, tương thích tốt với Cloudflare Pages. |
-| **Backend Engine** | **Hono.js trên Cloudflare Workers** | Framework Serverless siêu nhẹ, thời gian khởi động **0ms (Zero Cold Start)**, hỗ trợ luồng dữ liệu thời gian thực **Server-Sent Events (SSE)**. |
-| **Relational DB** | **Cloudflare D1 (SQLite Edge)** | Cơ sở dữ liệu SQL phân tán ngay tại mạng lưới Edge, độ trễ cực thấp (<10ms). |
-| **Vector DB** | **Cloudflare Vectorize** | Kho lưu trữ Vector 768 chiều tối ưu riêng cho bài toán RAG tìm kiếm ngữ nghĩa. |
-| **Object Storage** | **Cloudflare R2** | Kho lưu trữ file PDF nguyên bản với **0$ phí truyền tải dữ liệu (No Egress Fees)**. |
-| **LLM & Embeddings** | **Cloudflare Workers AI** | Chạy trực tiếp các mô hình AI Llama-3.1 8B & BGE-Base Embeddings trên hạ tầng GPU Edge. |
-| **Bảo Mật Anti-Bot** | **Cloudflare Turnstile** | Giải pháp xác thực chính chủ chống Bot độc hại không cần người dùng bấm hình ảnh phiền phức. |
+### 📊 Giải Pháp 2: Hệ Thống Nhật Ký AI Tracing Logs Tự Xây (Internal D1 Observability)
+- **Bài toán:** Cần giám sát luồng suy luận của 4 Agent mà không muốn phụ thuộc hoàn toàn vào dịch vụ bên thứ 3 (đảm bảo 100% riêng tư dữ liệu doanh nghiệp).
+- **Giải pháp kỹ thuật:**
+  - Thiết kế bảng `chat_logs` lưu trữ trực tiếp trong D1 Database: `session_id`, `trace_id`, `user_prompt`, `intent`, `thought_process` (JSON), `final_response`, `risk_level`.
+  - Đóng gói API `GET /api/admin/logs` và xây dựng giao diện Quản trị `AdminLogModal.tsx` trên Frontend.
+  - Cho phép quản trị viên bấm xem lại từng vết suy luận dưới dạng mã Terminal tối màu sắc nét.
+  - **Mô hình Hybrid:** Chạy song song với Langfuse Telemetry thông qua hàm bất đồng bộ `c.executionCtx.waitUntil()` để không làm giảm tốc độ phản hồi của người dùng.
 
 ---
 
-## 🎯 3. Bộ Câu Hỏi & Trả Lời Phỏng Vấn Thực Chiến (Interview Q&A Flashcards)
+### 📄 Giải Pháp 3: Bộ Bóc Tách Văn Bản PDF Nén FlateDecode (FlateDecode Stream Extractor)
+- **Bài toán:** Các file PDF nén dữ liệu dạng `/FlateDecode` (Stream zlib binary) khi đọc thông thường sẽ bị lỗi font rác nhị phân (`u`F...`).
+- **Giải pháp kỹ thuật:**
+  - Viết giải thuật giải nén luồng nhị phân trực tiếp trên Cloudflare Workers bằng Web Platform API `DecompressionStream('deflate-raw')`.
+  - Xây dựng hàm làm sạch `cleanPrintableText`: Loại bỏ 100% ký tự mã điều khiển nhị phân `[\x00-\x1F\x7F-\x9F]` và ký tự lỗi `U+FFFD`.
+  - Giữ lại 100% chuẩn xác chữ cái Tiếng Việt (có dấu), Tiếng Anh, chữ số và các dấu câu hợp lệ.
 
-### ❓ Q1: "Hãy giới thiệu về kiến trúc của dự án FinLegal AI mà bạn đã làm?"
+---
+
+### 📐 Giải Pháp 4: Kiểm Soát Kích Thước Metadata Vectorize (Vector Metadata Compliance)
+- **Bài toán:** Cloudflare Vectorize giới hạn đối tượng `metadata` của mỗi Vector không được vượt quá **10,240 bytes (10 KB)** (Lỗi `code = 40016: oversized metadata`).
+- **Giải pháp kỹ thuật:**
+  - Nâng cấp `TablePreservingChunker`: Tự động cắt nhỏ các dòng văn bản dài không có dấu xuống dòng thành các đoạn sub-chunk dưới 800-1000 ký tự.
+  - Cấu hình khóa bảo vệ cứng trong `VectorizeService`: `text: chunk.text.slice(0, 1000)`. Kích thước metadata luôn duy trì ở mức ~1 KB (rất an toàn so với hạn mức 10 KB).
+
+---
+
+### 🗑️ Giải Pháp 5: Quản Lý Vòng Đời & Xóa Dữ Liệu Triệt Để (Document Lifecycle Cleanup)
+- **Bài toán:** Người dùng cần xóa tài liệu khỏi hệ thống một cách an toàn và triệt để.
+- **Giải pháp kỹ thuật:**
+  - Endpoint `DELETE /api/documents/:docId`: Tự động xóa file PDF gốc lưu trong kho **Cloudflare R2 Bucket (`finlegal-docs`)** và xóa bản ghi quản lý trong **Cloudflare D1 Database (`document_records`)**.
+  - Giao diện nút Thùng Rác (`Trash2`) thông minh: Khi bấm xóa, chuyển sang icon xoay `Loader2` màu đỏ báo hiệu trạng thái đang xử lý.
+
+---
+
+### 🛡️ Giải Pháp 6: Bảo Vệ An Ninh Turnstile Tối Ưu Vòng Đời (Clean Turnstile Lifecycle)
+- **Bài toán:** Tránh cảnh báo dọn dẹp widget `[Cloudflare Turnstile] Cannot find Widget...` khi chuyển giao diện.
+- **Giải pháp kỹ thuật:**
+  - Tích hợp vòng đời chuẩn React trong `SecurityGate.tsx`: Gọi `turnstile.render()` khi mở và tự động thu hồi `turnstile.remove(widgetId)` khi unmount.
+
+---
+
+### ⚡ Giải Pháp 7: Luồng Phát Dữ Liệu Thời Gian Thực SSE (Real-time SSE Streaming)
+- **Bài toán:** Hiển thị từng bước suy luận của Agent mượt mà theo thời gian thực.
+- **Giải pháp kỹ thuật:**
+  - Tận dụng chuẩn **Server-Sent Events (SSE)** trên Hono.js Worker API.
+  - Xử lý các sự kiện `thought`, `audit_report`, `final_answer` và `error`.
+  - Khóa an toàn trong `useSSE.ts`: Khối `finally` đảm bảo biểu tượng xoay loading tự động tắt ngay cả khi luồng stream bị ngắt kết nối đột ngột.
+
+---
+
+## 🎯 3. Bộ Câu Hỏi & Trả Lời Phỏng Vấn Kỹ Thuật (Interview Q&A Flashcards)
+
+### ❓ Q1: "Bạn đã làm gì để bảo vệ ứng dụng AI khi đưa liên kết dự án vào CV?"
 > **💡 Gợi ý trả lời:**  
-> *"Dự án FinLegal AI là hệ thống trợ lý AI hỗ trợ phân tích Hợp đồng và Đối soát số liệu bán hàng doanh nghiệp. Em xây dựng dự án theo kiến trúc **Serverless Edge trên Cloudflare** kết hợp **Multi-Agent RAG**:*  
-> *- **Frontend:** Viết bằng Next.js 14, giao diện Theme Sáng tối giản, kết nối SSE để nhận phản hồi dạng Streaming.*  
-> *- **Backend:** Sử dụng Hono.js chạy trên Cloudflare Workers. Hệ thống gồm 4 Agent chuyên biệt: **Supervisor Agent** (điều phối ý định), **RAG Agent** (trích xuất điều khoản PDF từ Cloudflare Vectorize), **SQL Agent** (truy vấn số liệu từ D1 Database), và **Risk Auditor Agent** (đối soát sai lệch và lập báo cáo rủi ro).*  
-> *- Toàn bộ hệ thống chạy 100% trên hạ tầng Serverless Edge nên độ trễ cực kỳ thấp và chi phí vận hành gần như bằng 0."*
+> *"Em xây dựng cơ chế **IP Rate Limiting Middleware** chạy ngay tại mạng Edge của Cloudflare. Hệ thống đọc địa chỉ IP của khách truy cập qua header `cf-connecting-ip`, lưu vết vào D1 Database và áp dụng hạn mức **5 câu hỏi / 10 phút / IP**. Nếu có Bot cố tình spam, hệ thống sẽ ngắt ngay ở Edge với mã lỗi HTTP 429, bảo vệ 100% API key và chi phí tài khoản Cloudflare của em."*
 
 ---
 
-### ❓ Q2: "Tại sao bạn không gửi trực tiếp tệp PDF cho LLM đọc mà phải làm RAG và Vector Database?"
+### ❓ Q2: "Cách bạn xử lý bài toán bóc tách văn bản PDF bị lỗi font nhị phân trong môi trường Cloudflare Workers?"
 > **💡 Gợi ý trả lời:**  
-> *"Có 3 lý do kỹ thuật quan trọng khiến em chọn giải pháp RAG:*  
-> *1. **Chi Phí & Tốc Độ:** Nếu gửi nguyên file PDF 50 trang mỗi lần hỏi, chi phí Token sẽ cực kỳ đắt và thời gian phản hồi rất chậm (10-15s). RAG giúp trích xuất đúng 3-5 đoạn liên quan nhất (~500 tokens), phản hồi chỉ mất 1-2s.*  
-> *2. **Khả Năng Mở Rộng (Scale):** Mô hình RAG cho phép lưu trữ và tra cứu cùng lúc hàng nghìn Hợp đồng trong Vectorize, điều mà Context Window của LLM không thể làm được.*  
-> *3. **Độ Chính Xác & Kiểm Toán:** RAG cho phép trích xuất chính xác con số và số trang trong Hợp đồng để Agent SQL đối soát 1-1 với Database thực tế, tránh hoàn toàn hiện tượng AI nói bịa (Hallucination)."*
+> *"Các file PDF nén dữ liệu dạng FlateDecode (zlib stream). Em đã viết giải thuật giải nén luồng nhị phân bằng Web API `DecompressionStream('deflate-raw')` chạy trực tiếp trên V8 Worker Engine, kết hợp hàm làm sạch `cleanPrintableText` để loại bỏ toàn bộ mã điều khiển nhị phân `[\x00-\x1F\x7F-\x9F]`. Nhờ đó, dữ liệu đưa vào Vectorize luôn là 100% chữ Tiếng Việt sạch nét."*
 
 ---
 
-### ❓ Q3: "Luồng dữ liệu (Data Flow) khi người dùng tải lên một file PDF diễn ra như thế nào?"
+### ❓ Q3: "Tại sao bạn lại tự xây hệ thống Tracing Logs riêng thay vì chỉ dùng giải pháp bên thứ 3?"
 > **💡 Gợi ý trả lời:**  
-> *"Khi người dùng tải lên một file PDF Hợp đồng:*  
-> *1. File nhị phân được lưu trữ nguyên bản vào **Cloudflare R2 Storage**.*  
-> *2. Backend chạy thuật toán **PDF Text Stream Extractor** để bóc tách toàn bộ chữ và bảng biểu.*  
-> *3. Văn bản được cắt thành các đoạn nhỏ (Chunks ~1000 ký tự) nhờ bộ **Table-Preserving Chunker** để giữ nguyên cấu trúc bảng.*  
-> *4. Mỗi chunk được chuyển thành chuỗi Vector 768 chiều bằng mô hình **Workers AI BGE-Base Embeddings** và lưu vào **Cloudflare Vectorize**.*  
-> *5. Đồng thời, thông tin văn bản được lưu vào cơ sở dữ liệu **Cloudflare D1** để hiển thị lên danh sách tài liệu."*
-
----
-
-### ❓ Q4: "Cách bạn xử lý giao tiếp thời gian thực (Real-time Streaming) giữa Frontend và Backend?"
-> **💡 Gợi ý trả lời:**  
-> *"Em sử dụng công nghệ **Server-Sent Events (SSE)** thay vì WebSocket hay Polling truyền thống:*  
-> *- SSE sử dụng giao thức HTTP đơn giản, cực kỳ nhẹ và tương thích hoàn hảo với kiến trúc Serverless Edge của Cloudflare Workers.*  
-> *- Backend phát ra các sự kiện theo thời gian thực như `event: thought` (báo cáo bước suy luận của Agent), `event: audit_report` (kết quả đối soát), và `event: final_answer` (câu trả lời hoàn chỉnh).*  
-> *- Ở Frontend, em viết Custom Hook `useSSE` để nhận dữ liệu dòng và cập nhật UI mượt mà mà không bị kẹt xoay Loading."*
-
----
-
-## 📁 4. Sơ Đồ Cấu Trúc Mã Nguồn (Directory Tree)
-
-```text
-finlegal-ai/
-├── finlegal-ai-fe/                # FRONTEND (Next.js 14 Cloudflare Pages)
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── layout.tsx         # Root Layout & Turnstile Script
-│   │   │   └── page.tsx           # Main Page & Full-Screen Security Gate
-│   │   ├── components/
-│   │   │   ├── SecurityGate.tsx   # Cổng bảo mật Turnstile toàn màn hình
-│   │   │   ├── Header.tsx         # Thanh tiêu đề thương hiệu chính
-│   │   │   ├── FileUpload.tsx     # Khung tải tệp PDF Hợp đồng
-│   │   │   ├── PDFViewer.tsx      # Quản lý & Nút Xóa danh sách tài liệu
-│   │   │   ├── ChatWindow.tsx     # Cửa sổ trò chuyện & đối soát AI
-│   │   │   ├── ThoughtProcess.tsx # Accordion hiển thị từng bước suy luận Agent
-│   │   │   └── AuditCard.tsx      # Thẻ hiển thị kết quả kiểm toán rủi ro
-│   │   └── hooks/
-│   │       └── useSSE.ts          # Custom SSE Hook xử lý kết nối dữ liệu dòng
-│
-└── finlegal-ai-be/                # BACKEND (Hono.js Cloudflare Workers Engine)
-    ├── src/
-    │   ├── index.ts               # File chạy chính API, Middleware & Routes
-    │   ├── agents/
-    │   │   ├── supervisor.ts      # SupervisorAgent (Phân loại & Định tuyến)
-    │   │   ├── ragAgent.ts        # AdvancedRAGAgent (Tra cứu Vectorize)
-    │   │   ├── sqlAgent.ts        # SQLToolAgent (Truy vấn D1 Database)
-    │   │   └── auditor.ts         # RiskAuditorAgent (Đối soát sai lệch)
-    │   ├── services/
-    │   │   ├── llm.ts             # Service quản lý LLM & Fallback Models
-    │   │   ├── vectorize.ts       # Service tương tác Cloudflare Vectorize
-    │   │   ├── d1.ts              # Service tương tác D1 Database
-    │   │   └── chunker.ts         # Cắt đoạn văn bản bảo toàn bảng biểu
-    │   └── utils/
-    │       └── pdfExtractor.ts    # Bóc tách chữ từ tệp PDF nhị phân
-```
+> *"Em áp dụng mô hình **Decoupled Observability (Giám sát tách rời)**. Việc tự xây bảng `chat_logs` trong Cloudflare D1 Database giúp doanh nghiệp hoàn toàn làm chủ dữ liệu vết suy luận của Agent (bảo mật 100% riêng tư). Đồng thời, em gửi telemetry bất đồng bộ sang Langfuse để theo dõi đồ thị trực quan mà không làm chậm trải nghiệm của người dùng."*
