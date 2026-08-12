@@ -50,7 +50,7 @@ app.use('*', async (c, next) => {
   }
 
   // Validate Cloudflare Turnstile Token if secret key is present
-  const secretKey = c.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA'; // Default Cloudflare Pass Testing Key
+  const secretKey = c.env.TURNSTILE_SECRET_KEY || '0x4AAAAAAENuytTfFf1zhQSPfKLqcDI31mM'; // Production Cloudflare Turnstile Secret Key
   if (turnstileToken) {
     try {
       const formData = new FormData();
