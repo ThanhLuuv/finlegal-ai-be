@@ -85,7 +85,7 @@ app.use('*', async (c, next) => {
 app.use('*', cors({
   origin: '*',
   allowHeaders: ['Content-Type', 'Authorization', 'X-Turnstile-Token'],
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
+  allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
 }));
 
 // 1. Health Check Endpoint
@@ -136,6 +136,31 @@ app.get('/api/documents', async (c) => {
     return c.json({ documents: results || [] });
   } catch (err) {
     return c.json({ documents: [] });
+  }
+});
+
+// 3.5. Delete Document Endpoint (Cleans D1 Database & R2 Storage)
+app.delete('/api/documents/:docId', async (c) => {
+  try {
+    const docId = c.req.param('docId');
+
+    // Query document record from D1 to retrieve R2 storage key
+    const doc = await c.env.DB.prepare('SELECT r2_key FROM document_records WHERE doc_id = ?').bind(docId).first<{ r2_key?: string }>();
+    if (doc && doc.r2_key) {
+      try {
+        await c.env.R2.delete(doc.r2_key);
+      } catch (r2Err) {
+        console.warn('R2 file deletion warning:', r2Err);
+      }
+    }
+
+    // Delete record from D1 Database
+    await c.env.DB.prepare('DELETE FROM document_records WHERE doc_id = ?').bind(docId).run();
+
+    return c.json({ success: true, message: 'Đã xóa tài liệu thành công.' });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Không thể xóa tài liệu: ${errorMsg}` }, 500);
   }
 });
 
