@@ -26,38 +26,41 @@ export class LLMProviderService {
   public async generateText(messages: LLMMessage[], options: LLMOptions = {}): Promise<string> {
     const temperature = options.temperature ?? 0.1;
     const maxTokens = options.max_tokens ?? 2048;
+    const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
 
-    try {
-      // Primary: Use Cloudflare Workers AI (Llama 3.1 8B Instruct)
-      const response = await (this.ai as any).run('@cf/meta/llama-3.1-8b-instruct', {
-        messages,
-        temperature,
-        max_tokens: maxTokens,
-      });
+    // List of official Cloudflare Workers AI text generation models
+    const models = [
+      '@cf/meta/llama-3.1-8b-instruct',
+      '@cf/meta/llama-3-8b-instruct',
+      '@cf/mistral/mistral-7b-instruct-v0.1'
+    ];
 
-      if (response && response.response) {
-        return response.response;
+    for (const modelName of models) {
+      try {
+        const response = await (this.ai as any).run(modelName, {
+          messages: formattedMessages,
+          temperature,
+          max_tokens: maxTokens,
+        });
+
+        if (response && response.response) {
+          return response.response;
+        }
+      } catch (err) {
+        console.warn(`Workers AI model ${modelName} failed, trying next fallback...`, err);
       }
-    } catch (err) {
-      console.warn('Workers AI primary model failed, attempting fallback or secondary model...', err);
     }
 
-    // Fallback: If Gemini API Key is provided in environment variables
+    // Secondary Fallback: Gemini API if key is present
     if (this.geminiApiKey) {
-      return await this.callGeminiAPI(messages, temperature);
+      try {
+        return await this.callGeminiAPI(messages, temperature);
+      } catch (geminiErr) {
+        console.warn('Gemini API fallback failed:', geminiErr);
+      }
     }
 
-    // Secondary Fallback: Use Qwen 2.5 on Workers AI
-    try {
-      const response = await (this.ai as any).run('@cf/qwen/qwen2.5-7b-instruct', {
-        messages,
-        temperature,
-        max_tokens: maxTokens,
-      });
-      return response.response;
-    } catch (finalErr) {
-      throw new Error(`LLM Generation Failure: ${finalErr instanceof Error ? finalErr.message : String(finalErr)}`);
-    }
+    throw new Error('LLM Generation Failure: All Workers AI models and Gemini API fallbacks were unavailable.');
   }
 
   /**
