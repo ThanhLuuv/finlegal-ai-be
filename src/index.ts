@@ -184,9 +184,9 @@ Tổng giá trị hợp đồng năm 2024: $270,000.00 USD.`;
 
     // Save record to Cloudflare D1 Database
     await c.env.DB.prepare(
-      `INSERT INTO document_records (doc_id, file_name, file_r2_key, total_pages, total_chunks, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).bind(docId, fileName, `documents/${docId}/${fileName}`, 1, chunks.length, new Date().toISOString()).run();
+      `INSERT INTO document_records (doc_id, file_name, total_pages, total_chunks, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(docId, fileName, 1, chunks.length, new Date().toISOString()).run();
 
     return c.json({
       success: true,
