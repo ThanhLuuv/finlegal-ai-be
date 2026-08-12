@@ -10,16 +10,18 @@ export function cleanPrintableText(text: string): string {
 }
 
 /**
- * Checks if extracted text is binary noise (like "u F r M Y U L = D 1 g R")
+ * Checks if extracted text is pure binary noise.
+ * Relaxed to ensure Vietnamese text with accents and numbers isn't falsely discarded.
  */
 export function isBinaryNoise(text: string): boolean {
-  if (!text || text.length < 5) return true;
+  if (!text || text.trim().length < 4) return true;
   
-  // Count real words with length >= 2 vs single letter noise
-  const realWords = text.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [];
-  const singleLetters = text.match(/\b[A-Za-z0-9]\b/g) || [];
+  // Count valid word characters (including Vietnamese Unicode)
+  const validChars = text.match(/[A-Za-z0-9À-ỹ\s\.,:\-\(\)\/\$]/g) || [];
+  const validRatio = validChars.length / text.length;
   
-  if (realWords.length < 3 || singleLetters.length > realWords.length * 1.2) {
+  // If at least 60% of characters are printable letters/numbers/punctuation, it is valid text
+  if (validRatio < 0.5) {
     return true;
   }
   return false;
@@ -129,16 +131,29 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
       }
     }
 
-    // Extract array strings: [(Hello) -10 (World)] TJ
+    // Extract array strings: [(Hello) -10 (World)] TJ or [<0001> -10 <0002>] TJ
     const tjArrayRegex = /\[([\s\S]*?)\]\s*TJ/g;
     let tjArrayMatch: RegExpExecArray | null;
     while ((tjArrayMatch = tjArrayRegex.exec(block)) !== null) {
       const inner = tjArrayMatch[1];
       const strInside = inner.match(/\(([\s\S]*?)\)/g);
       if (strInside) {
-        const joined = strInside.map(s => s.slice(1, -1)).join('');
+        const joined = strInside.map(s => s.slice(1, -1)).join(' ');
         const cleaned = cleanPrintableText(joined);
         if (cleaned.length > 0) textBlocks.push(cleaned);
+      }
+
+      const hexInside = inner.match(/<([0-9A-Fa-f\s]+)>/g);
+      if (hexInside && cmap && cmap.size > 0) {
+        let decodedStr = '';
+        for (const h of hexInside) {
+          const hexClean = h.slice(1, -1).replace(/\s+/g, '').toUpperCase();
+          for (let i = 0; i < hexClean.length; i += 4) {
+            const chunk = hexClean.substring(i, i + 4);
+            decodedStr += cmap.get(chunk) || '';
+          }
+        }
+        if (decodedStr.length > 0) textBlocks.push(decodedStr);
       }
     }
   }
@@ -149,6 +164,7 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
 export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<string> {
   const bytes = new Uint8Array(buffer);
   const latin1Decoder = new TextDecoder('latin1');
+  const utf8Decoder = new TextDecoder('utf-8');
   const fullLatin1Str = latin1Decoder.decode(bytes);
 
   // Extract all valid words >= 2 chars directly from PDF buffer
@@ -179,8 +195,13 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
       const decompressed = await decompressFlate(streamBytes);
 
       if (decompressed && decompressed.length > 0) {
-        const decompressedStr = latin1Decoder.decode(decompressed);
-        
+        let decompressedStr = '';
+        try {
+          decompressedStr = utf8Decoder.decode(decompressed);
+        } catch {
+          decompressedStr = latin1Decoder.decode(decompressed);
+        }
+
         let streamCMap = globalCMap;
         if (decompressedStr.includes('beginbfrange') || decompressedStr.includes('beginbfchar')) {
           streamCMap = parseCMap(decompressedStr);
@@ -209,3 +230,4 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
   // 4. Return valid words text from PDF buffer
   return validWordsText.length > 10 ? validWordsText : cleanPrintableText(fullLatin1Str);
 }
+

@@ -11,28 +11,26 @@ export class TablePreservingChunker {
   private maxChunkSize: number;
   private chunkOverlap: number;
 
-  constructor(maxChunkSize = 800, chunkOverlap = 150) {
+  constructor(maxChunkSize = 1500, chunkOverlap = 250) {
     this.maxChunkSize = maxChunkSize;
     this.chunkOverlap = chunkOverlap;
   }
 
   /**
    * Chunks raw document text into semantically cohesive, table-preserved chunks.
-   * Guarantees that no single chunk ever exceeds 1000 characters.
    */
   public chunkDocument(rawText: string, defaultPage = 1): ChunkOutput[] {
-    // Normalize newlines and break long single-line blocks into 500-char paragraphs
+    // Normalize newlines and break long single-line blocks into 800-char sub-paragraphs
     const paragraphs = rawText
       .replace(/\r/g, '')
       .split('\n')
       .flatMap(line => {
         if (line.length <= this.maxChunkSize) return [line];
-        // Split long un-newline text by spaces or periods into sub-lines
         const subLines: string[] = [];
         let curr = '';
         const words = line.split(' ');
         for (const w of words) {
-          if ((curr + ' ' + w).length > 600) {
+          if ((curr + ' ' + w).length > 800) {
             subLines.push(curr.trim());
             curr = w;
           } else {
@@ -86,7 +84,7 @@ export class TablePreservingChunker {
           const chunkText = currentChunkLines.join('\n').trim();
           if (chunkText.length > 0) {
             chunks.push({
-              text: chunkText.slice(0, 1000), // Hard safety cap to 1000 chars
+              text: chunkText, // Full preserved chunk text
               chunkIndex: chunkIndex++,
               pageNumber: defaultPage,
               containsTable: chunkText.includes('|') && chunkText.split('\n').some(l => l.trim().startsWith('|')),
@@ -114,3 +112,4 @@ export class TablePreservingChunker {
     return result;
   }
 }
+

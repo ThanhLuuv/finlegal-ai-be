@@ -1,4 +1,4 @@
-// Unified LLM Provider Service (Cloudflare Workers AI + Gemini Fallback)
+// Unified LLM Provider Service (Gemini API Priority + Cloudflare Workers AI Multilingual Fallback)
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
@@ -28,10 +28,20 @@ export class LLMProviderService {
     const maxTokens = options.max_tokens ?? 2048;
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
 
-    // List of official Cloudflare Workers AI text generation models
+    // Primary: If Gemini API key is provided, use Gemini 1.5 Flash for high-speed & superior Vietnamese quality
+    if (this.geminiApiKey) {
+      try {
+        return await this.callGeminiAPI(messages, temperature);
+      } catch (geminiErr) {
+        console.warn('Gemini API call failed, falling back to Workers AI models:', geminiErr);
+      }
+    }
+
+    // Secondary: Official Cloudflare Workers AI text generation models list
     const models = [
+      '@cf/meta/llama-3.3-70b-instruct',
       '@cf/meta/llama-3.1-8b-instruct',
-      '@cf/meta/llama-3-8b-instruct',
+      '@cf/qwen/qwen1.5-14b-chat-awq',
       '@cf/mistral/mistral-7b-instruct-v0.1'
     ];
 
@@ -48,15 +58,6 @@ export class LLMProviderService {
         }
       } catch (err) {
         console.warn(`Workers AI model ${modelName} failed, trying next fallback...`, err);
-      }
-    }
-
-    // Secondary Fallback: Gemini API if key is present
-    if (this.geminiApiKey) {
-      try {
-        return await this.callGeminiAPI(messages, temperature);
-      } catch (geminiErr) {
-        console.warn('Gemini API fallback failed:', geminiErr);
       }
     }
 
@@ -146,3 +147,4 @@ export class LLMProviderService {
     return data.candidates[0].content.parts[0].text;
   }
 }
+
