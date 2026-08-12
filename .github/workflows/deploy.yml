@@ -20,6 +20,18 @@ jobs:
           node-version: 22
           cache: 'npm'
 
+      - name: Verify Secret Availability
+        run: |
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN secret is EMPTY or NOT SET in GitHub Repository Secrets!"
+            exit 1
+          fi
+          if [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID secret is EMPTY or NOT SET in GitHub Repository Secrets!"
+            exit 1
+          fi
+          echo "All required GitHub secrets are present."
+
       - name: Install Dependencies
         run: npm install
 
