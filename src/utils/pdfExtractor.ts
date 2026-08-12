@@ -315,11 +315,19 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
     return fallbackParsed;
   }
 
-  // 4. Ultimate fallback: Extract printable word tokens and decode hex strings
+  // 4. Ultimate fallback: Extract printable word tokens and decode hex strings, filtering PDF syntax keywords
   const cleanedFullStr = stripPDFSyntaxNoise(fullLatin1Str);
-  const wordTokens = cleanedFullStr.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [];
+  const pdfKeywords = new Set([
+    'TYPE', 'OUTPUTINTENT', 'GTS_PDFA1', 'STRUCTELEM', 'ENDOBJ', 'OBJ', 'STREAM', 'ENDSTREAM',
+    'CIDFONTTYPE', 'CIDFONTTYPE2', 'CIDTOGIDMAP', 'CIDSYSTEMINFO', 'IDENTITY', 'SUBTYPE',
+    'FONTDESCRIPTOR', 'FONTFILE', 'FONTFILE2', 'FONTFILE3', 'PROCSET', 'MEDIABOX', 'CROPBOX',
+    'RESOURCES', 'PARENT', 'KIDS', 'ROOT', 'INFO', 'TRANSPARENCY', 'COUNT', 'LAST', 'GROUP'
+  ]);
+  const wordTokens = (cleanedFullStr.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [])
+    .filter(token => !pdfKeywords.has(token.toUpperCase()));
   return wordTokens.join(' ');
 }
+
 
 
 
