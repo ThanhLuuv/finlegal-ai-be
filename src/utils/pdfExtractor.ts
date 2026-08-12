@@ -1,12 +1,68 @@
-// Comprehensive, pure JS FlateDecode & CMap PDF Text Extractor for Cloudflare Workers Environment
+// Comprehensive, pure JS FlateDecode, CMap & Hex Decoded PDF Text Extractor for Cloudflare Workers Environment
 
 export function cleanPrintableText(text: string): string {
   if (!text) return '';
-  // Remove binary control characters, replacement character (U+FFFD), and non-printable noise
   return text
     .replace(/[\x00-\x1F\x7F-\x9F\uFFFD]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Decodes raw PDF Hex strings like <362F3230323520852050726573656E74> into human readable text ("6/2025 – Present")
+ */
+export function decodeHexPDFString(hexStr: string): string {
+  const cleanHex = hexStr.replace(/[^0-9A-Fa-f]/g, '');
+  if (cleanHex.length < 2 || cleanHex.length % 2 !== 0) return '';
+  const bytes = new Uint8Array(cleanHex.length / 2);
+  for (let i = 0; i < cleanHex.length; i += 2) {
+    bytes[i / 2] = parseInt(cleanHex.substring(i, i + 2), 16);
+  }
+  try {
+    const decoded = new TextDecoder('utf-8').decode(bytes);
+    if (decoded && cleanPrintableText(decoded).length > 0) return decoded;
+  } catch {
+    // fallback
+  }
+  try {
+    return new TextDecoder('latin1').decode(bytes);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Strips raw PDF internal syntax objects (/Type /OutputIntent, endobj, /StructElem, ICC profiles)
+ * and decodes embedded PDF hex text strings into clean text.
+ */
+export function stripPDFSyntaxNoise(text: string): string {
+  if (!text) return '';
+
+  // 1. Convert all embedded PDF hex strings <362F3230...> to readable text
+  let result = text.replace(/<([0-9A-Fa-f]{4,})>/g, (fullMatch, hexStr) => {
+    const decoded = decodeHexPDFString(hexStr);
+    return decoded && decoded.trim().length > 0 ? ` ${decoded} ` : ' ';
+  });
+
+  // 2. Strip internal PDF structural operators, object tags, and CMap headers
+  result = result
+    .replace(/\/Type\s*\/[A-Za-z0-9]+/gi, ' ')
+    .replace(/\/StructElem|\/OutputIntent|\/GTS_[A-Za-z0-9]+|\/Group|\/Transparency|\/Font|\/ProcSet|\/MediaBox|\/CropBox|\/Resources|\/Parent|\/Kids|\/Root|\/Info/gi, ' ')
+    .replace(/\b\d+\s+\d+\s+obj\b/gi, ' ')
+    .replace(/\bendobj\b/gi, ' ')
+    .replace(/\/P\s+\d+\s+\d+\s+R/gi, ' ')
+    .replace(/\/Last\s+\d+\s+\d+\s+R/gi, ' ')
+    .replace(/\/Count\s+\d+/gi, ' ')
+    .replace(/\/T\s+|\/E\s+|\/S\s+|\/V\s+/gi, ' ')
+    .replace(/XYZ\s+[^\s]+\s+[^\s]+\s+[^\s]+/gi, ' ')
+    .replace(/endstream/gi, ' ')
+    .replace(/stream/gi, ' ')
+    .replace(/<<[\s\S]*?>>/g, ' ')
+    .replace(/[\/\\\{\}\<\>\[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return result;
 }
 
 /**
@@ -16,7 +72,7 @@ export function isBinaryNoise(text: string): boolean {
   if (!text || text.trim().length < 4) return true;
   const validChars = text.match(/[A-Za-z0-9À-ỹ\s\.,:\-\(\)\/\$]/g) || [];
   const validRatio = validChars.length / text.length;
-  return validRatio < 0.4;
+  return validRatio < 0.35;
 }
 
 /**
@@ -25,7 +81,6 @@ export function isBinaryNoise(text: string): boolean {
 function parseCMap(cmapStr: string): Map<string, string> {
   const map = new Map<string, string>();
   
-  // Match bfchar mappings: <0001> <004C>
   const bfcharRegex = /<([0-9A-Fa-f]+)>\s+<([0-9A-Fa-f]+)>/g;
   let match: RegExpExecArray | null;
   while ((match = bfcharRegex.exec(cmapStr)) !== null) {
@@ -41,7 +96,6 @@ function parseCMap(cmapStr: string): Map<string, string> {
     if (decodedStr) map.set(code, decodedStr);
   }
 
-  // Match bfrange mappings: <0001> <0005> <0041>
   const bfrangeRegex = /<([0-9A-Fa-f]+)>\s+<([0-9A-Fa-f]+)>\s+<([0-9A-Fa-f]+)>/g;
   while ((match = bfrangeRegex.exec(cmapStr)) !== null) {
     const startCode = parseInt(match[1], 16);
@@ -90,7 +144,6 @@ async function decompressFlate(bytes: Uint8Array): Promise<Uint8Array | null> {
 function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>): string {
   const textBlocks: string[] = [];
 
-  // Fast linear scanning for BT ... ET blocks without regex backtracking
   let pos = 0;
   while (pos < rawString.length) {
     const btIdx = rawString.indexOf('BT', pos);
@@ -110,7 +163,7 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
       }
     }
 
-    // Extract hex strings with CMap decoding: <00010002> Tj
+    // Extract hex strings with CMap decoding or direct hex decoding: <00010002> Tj
     const hexTjRegex = /<([0-9A-Fa-f\s]+)>\s*Tj/g;
     let hexTjMatch: RegExpExecArray | null;
     while ((hexTjMatch = hexTjRegex.exec(block)) !== null) {
@@ -123,8 +176,10 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
         }
         if (decoded.length > 0) textBlocks.push(decoded);
       } else {
-        const cleaned = cleanPrintableText(hexStr);
-        if (cleaned.length > 0) textBlocks.push(cleaned);
+        const decodedDirect = decodeHexPDFString(hexStr);
+        if (decodedDirect.length > 0) {
+          textBlocks.push(decodedDirect);
+        }
       }
     }
 
@@ -141,23 +196,28 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
       }
 
       const hexInside = inner.match(/<([0-9A-Fa-f\s]+)>/g);
-      if (hexInside && cmap && cmap.size > 0) {
-        let decodedStr = '';
+      if (hexInside) {
         for (const h of hexInside) {
           const hexClean = h.slice(1, -1).replace(/\s+/g, '').toUpperCase();
-          for (let i = 0; i < hexClean.length; i += 4) {
-            const chunk = hexClean.substring(i, i + 4);
-            decodedStr += cmap.get(chunk) || '';
+          if (cmap && cmap.size > 0) {
+            let decodedStr = '';
+            for (let i = 0; i < hexClean.length; i += 4) {
+              const chunk = hexClean.substring(i, i + 4);
+              decodedStr += cmap.get(chunk) || '';
+            }
+            if (decodedStr.length > 0) textBlocks.push(decodedStr);
+          } else {
+            const decodedDirect = decodeHexPDFString(hexClean);
+            if (decodedDirect.length > 0) textBlocks.push(decodedDirect);
           }
         }
-        if (decodedStr.length > 0) textBlocks.push(decodedStr);
       }
     }
 
     pos = etIdx + 2;
   }
 
-  return textBlocks.join(' ');
+  return stripPDFSyntaxNoise(textBlocks.join(' '));
 }
 
 export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<string> {
@@ -165,10 +225,6 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
   const latin1Decoder = new TextDecoder('latin1');
   const utf8Decoder = new TextDecoder('utf-8');
   const fullLatin1Str = latin1Decoder.decode(bytes);
-
-  // Extract all valid words >= 2 chars directly from PDF buffer
-  const wordTokens = fullLatin1Str.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [];
-  const validWordsText = wordTokens.join(' ');
 
   // 1. Scan for ToUnicode CMap blocks
   let globalCMap: Map<string, string> | undefined;
@@ -209,7 +265,7 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
         }
 
         const parsedText = parseTextFromStreamString(decompressedStr, streamCMap);
-        if (parsedText && parsedText.length > 3 && !isBinaryNoise(parsedText)) {
+        if (parsedText && parsedText.length > 3) {
           decompressedTextBlocks.push(parsedText);
         }
       }
@@ -219,19 +275,23 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
   }
 
   if (decompressedTextBlocks.length > 0) {
-    const fullText = decompressedTextBlocks.join('\n\n');
-    const cleaned = cleanPrintableText(fullText);
-    if (!isBinaryNoise(cleaned)) return cleaned;
+    const fullText = stripPDFSyntaxNoise(decompressedTextBlocks.join('\n\n'));
+    if (fullText.length > 10 && !isBinaryNoise(fullText)) {
+      return fullText;
+    }
   }
 
-  // 3. Fallback: parse uncompressed text blocks
-  const fallbackParsed = parseTextFromStreamString(fullLatin1Str, globalCMap);
-  if (!isBinaryNoise(fallbackParsed)) {
-    return cleanPrintableText(fallbackParsed);
+  // 3. Fallback: parse uncompressed text blocks & decode embedded hex strings
+  const fallbackParsed = stripPDFSyntaxNoise(parseTextFromStreamString(fullLatin1Str, globalCMap));
+  if (fallbackParsed.length > 10 && !isBinaryNoise(fallbackParsed)) {
+    return fallbackParsed;
   }
 
-  // 4. Return valid words text from PDF buffer
-  return validWordsText.length > 10 ? validWordsText : cleanPrintableText(fullLatin1Str);
+  // 4. Ultimate fallback: Extract printable word tokens and decode hex strings
+  const cleanedFullStr = stripPDFSyntaxNoise(fullLatin1Str);
+  const wordTokens = cleanedFullStr.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [];
+  return wordTokens.join(' ');
 }
+
 
 
