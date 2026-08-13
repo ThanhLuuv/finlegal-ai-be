@@ -53,11 +53,42 @@ export class RagService {
       }
     }
 
-    // 3. Reciprocal Rank Fusion (RRF) Reranking (Select Top 5-8 candidate evidence blocks)
-    const evidenceBlocks = this.reranker.rerank(rawMatches, query.keywords, 5);
+    // 3. Reciprocal Rank Fusion (RRF) Reranking (Select Top 8 candidate evidence blocks)
+    const evidenceBlocks = this.reranker.rerank(rawMatches, query.keywords, 8);
 
-    // 4. Structural Parent Section & Neighbor Expansion from D1 Database
-    if (this.d1Repo && evidenceBlocks.length > 0) {
+    // 4. Structural Parent Section & Neighbor Expansion + Top Header Guarantee from D1 Database
+    if (this.d1Repo && selectedDocId && evidenceBlocks.length > 0) {
+      try {
+        const hasHeaderChunk = evidenceBlocks.some(b => b.chunkId.endsWith('_chunk_0'));
+        if (!hasHeaderChunk) {
+          const headerChunks = await this.d1Repo.getNeighborChunks(selectedDocId, 0);
+          if (headerChunks && headerChunks.length > 0 && headerChunks[0]) {
+            const hChunk = headerChunks[0];
+            const headerChunkId = `${selectedDocId}_chunk_0`;
+            evidenceBlocks.unshift({
+              chunkId: headerChunkId,
+              documentId: selectedDocId,
+              content: hChunk.content,
+              score: 0.99,
+              vectorScore: 0.99,
+              lexicalScore: 0.99,
+              rrfScore: 0.99,
+              citation: {
+                documentId: selectedDocId,
+                documentName: 'Tài liệu',
+                sectionTitle: 'Thông tin chung',
+                sectionPath: ['Thông tin chung'],
+                pageStart: hChunk.page_start || 1,
+                pageEnd: hChunk.page_end || 1,
+                chunkId: headerChunkId
+              }
+            });
+          }
+        }
+      } catch (hErr) {
+        console.warn('Header Chunk Fallback notice:', hErr);
+      }
+
       for (const block of evidenceBlocks) {
         try {
           const match = rawMatches.find(m => m.chunkId === block.chunkId);
