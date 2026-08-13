@@ -20,9 +20,42 @@ export class D1DocumentRepository {
   }
 
   /**
+   * Auto-migrates missing columns for existing D1 tables safely
+   */
+  private async ensureSchemaColumns(): Promise<void> {
+    const alterStatements = [
+      `ALTER TABLE document_records ADD COLUMN tenant_id TEXT DEFAULT 'tenant_default'`,
+      `ALTER TABLE document_records ADD COLUMN user_id TEXT DEFAULT 'user_default'`,
+      `ALTER TABLE document_records ADD COLUMN version TEXT DEFAULT 'v1'`,
+      `ALTER TABLE document_records ADD COLUMN pipeline_version TEXT DEFAULT 'v1.0'`,
+      `ALTER TABLE document_records ADD COLUMN parser_version TEXT DEFAULT 'v1.0'`,
+      `ALTER TABLE document_records ADD COLUMN chunker_version TEXT DEFAULT 'v1.0'`,
+      `ALTER TABLE document_records ADD COLUMN embedding_model TEXT DEFAULT '@cf/baai/bge-m3'`,
+      `ALTER TABLE document_records ADD COLUMN indexed_at DATETIME`,
+      `ALTER TABLE document_sections ADD COLUMN tenant_id TEXT DEFAULT 'tenant_default'`,
+      `ALTER TABLE document_chunks ADD COLUMN tenant_id TEXT DEFAULT 'tenant_default'`,
+      `ALTER TABLE document_chunks ADD COLUMN pipeline_version TEXT DEFAULT 'v1.0'`,
+      `ALTER TABLE document_chunks ADD COLUMN parser_version TEXT DEFAULT 'v1.0'`,
+      `ALTER TABLE document_chunks ADD COLUMN chunker_version TEXT DEFAULT 'v1.0'`,
+      `ALTER TABLE document_chunks ADD COLUMN embedding_model TEXT DEFAULT '@cf/baai/bge-m3'`,
+      `ALTER TABLE chat_logs ADD COLUMN tenant_id TEXT DEFAULT 'tenant_default'`
+    ];
+
+    for (const stmt of alterStatements) {
+      try {
+        await this.db.prepare(stmt).run();
+      } catch {
+        // Ignore duplicate column name or table not created errors
+      }
+    }
+  }
+
+  /**
    * Creates initial document record with UPLOADED status
    */
   public async createInitialRecord(options: CreateDocumentRecordOptions | string, fileName?: string, r2Key?: string): Promise<void> {
+    await this.ensureSchemaColumns();
+
     let docId: string;
     let name: string;
     let key: string;
@@ -226,6 +259,8 @@ export class D1DocumentRepository {
    * Fetches all active documents (is_active = 1) for a given tenant/user scope
    */
   public async listActiveDocuments(userId = 'user_default', tenantId = 'tenant_default'): Promise<any[]> {
+    await this.ensureSchemaColumns();
+
     const { results } = await this.db.prepare(
       `SELECT doc_id, file_name, tenant_id, user_id, version, is_active, total_pages, total_chunks, processing_status, created_at 
        FROM document_records 
