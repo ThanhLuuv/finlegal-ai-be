@@ -73,6 +73,7 @@ export class VectorRepository {
       values: embeddings[idx],
       metadata: {
         docId: chunk.documentId,
+        tenantId: chunk.tenantId || chunk.metadata.tenantId || 'tenant_default',
         fileName: chunk.metadata.fileName,
         pageStart: chunk.pageStart || 1,
         pageEnd: chunk.pageEnd || 1,
@@ -107,12 +108,13 @@ export class VectorRepository {
   }
 
   /**
-   * Queries Vectorize with mandatory metadata filtering when targetDocId is specified
+   * Queries Vectorize with mandatory metadata filtering when targetDocId or tenantId is specified
    */
   public async queryVectorMatches(
     queryText: string,
     topK = 20,
-    selectedDocId?: string
+    selectedDocId?: string,
+    tenantId?: string
   ): Promise<Array<{
     chunkId: string;
     score: number;
@@ -121,9 +123,13 @@ export class VectorRepository {
   }>> {
     const queryVector = await this.generateEmbedding(queryText);
 
+    const filterObj: Record<string, string> = {};
+    if (selectedDocId) filterObj.docId = selectedDocId;
+    if (tenantId && tenantId !== 'tenant_default') filterObj.tenantId = tenantId;
+
     const matches = await this.vectorize.query(queryVector, {
       topK,
-      filter: selectedDocId ? { docId: selectedDocId } : undefined,
+      filter: Object.keys(filterObj).length > 0 ? filterObj : undefined,
       returnMetadata: 'all'
     });
 

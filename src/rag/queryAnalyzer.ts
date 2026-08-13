@@ -32,7 +32,7 @@ Ví dụ:
 BẮT BUỘC: Trả về duy nhất 1 câu truy vấn đã tối ưu. Không viết lời dẫn.`
           },
           { role: 'user', content: cleanPrompt }
-        ], { temperature: 0.1, max_tokens: 120 });
+        ], { task: 'QUERY_REWRITE', temperature: 0.1, max_tokens: 120 });
 
         if (rewriteRes && rewriteRes.trim().length > 3) {
           rewrittenQuery = rewriteRes.trim().replace(/^["']|["']$/g, '');

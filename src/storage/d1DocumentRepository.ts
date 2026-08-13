@@ -6,6 +6,7 @@ export interface CreateDocumentRecordOptions {
   docId: string;
   fileName: string;
   r2Key: string;
+  tenantId?: string;
   userId?: string;
   version?: string;
   parentDocId?: string;
@@ -25,6 +26,7 @@ export class D1DocumentRepository {
     let docId: string;
     let name: string;
     let key: string;
+    let tenantId = 'tenant_default';
     let userId = 'user_default';
     let version = 'v1';
     let parentDocId: string | null = null;
@@ -33,6 +35,7 @@ export class D1DocumentRepository {
       docId = options.docId;
       name = options.fileName;
       key = options.r2Key;
+      tenantId = options.tenantId || 'tenant_default';
       userId = options.userId || 'user_default';
       version = options.version || 'v1';
       parentDocId = options.parentDocId || null;
@@ -43,9 +46,9 @@ export class D1DocumentRepository {
     }
 
     await this.db.prepare(
-      `INSERT INTO document_records (doc_id, file_name, r2_key, user_id, version, is_active, parent_doc_id, total_pages, total_chunks, processing_status, created_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?, 1, 0, 'UPLOADED', ?)`
-    ).bind(docId, name, key, userId, version, parentDocId, new Date().toISOString()).run();
+      `INSERT INTO document_records (doc_id, file_name, r2_key, tenant_id, user_id, version, is_active, parent_doc_id, total_pages, total_chunks, processing_status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, 1, 0, 'UPLOADED', ?)`
+    ).bind(docId, name, key, tenantId, userId, version, parentDocId, new Date().toISOString()).run();
   }
 
   /**
@@ -128,16 +131,17 @@ export class D1DocumentRepository {
   /**
    * Persists parsed document sections into D1 Database
    */
-  public async saveSections(docId: string, sections: ParsedDocument['sections']): Promise<void> {
+  public async saveSections(docId: string, sections: ParsedDocument['sections'], tenantId = 'tenant_default'): Promise<void> {
     if (!sections || sections.length === 0) return;
 
     for (const sec of sections) {
       await this.db.prepare(
-        `INSERT OR REPLACE INTO document_sections (id, document_id, title, section_path, page_start, page_end, content)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT OR REPLACE INTO document_sections (id, document_id, tenant_id, title, section_path, page_start, page_end, content)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         sec.id,
         docId,
+        tenantId,
         sec.title || 'Untitled Section',
         JSON.stringify(sec.sectionPath || []),
         sec.pageStart || 1,
@@ -150,17 +154,18 @@ export class D1DocumentRepository {
   /**
    * Persists structure-aware chunks into D1 Database
    */
-  public async saveChunks(docId: string, chunks: RagChunk[]): Promise<void> {
+  public async saveChunks(docId: string, chunks: RagChunk[], tenantId = 'tenant_default'): Promise<void> {
     if (!chunks || chunks.length === 0) return;
 
     for (const chunk of chunks) {
       await this.db.prepare(
         `INSERT OR REPLACE INTO document_chunks 
-         (id, document_id, section_id, chunk_index, chunk_type, content, token_count, content_hash, embedding_version, page_start, page_end, metadata_json, vector_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, document_id, tenant_id, section_id, chunk_index, chunk_type, content, token_count, content_hash, embedding_version, page_start, page_end, metadata_json, vector_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         chunk.id,
         docId,
+        chunk.tenantId || tenantId,
         chunk.sectionId || null,
         chunk.metadata.chunkIndex,
         chunk.chunkType,
@@ -179,15 +184,15 @@ export class D1DocumentRepository {
   /**
    * Fetches neighbor chunks (previous, current, next) from D1 for Parent Context Expansion
    */
-  public async getNeighborChunks(docId: string, chunkIndex: number): Promise<Array<{ chunk_index: number; content: string }>> {
+  public async getNeighborChunks(docId: string, chunkIndex: number): Promise<Array<{ chunk_index: number; content: string; page_start?: number; page_end?: number }>> {
     try {
       const minIndex = Math.max(0, chunkIndex - 1);
       const maxIndex = chunkIndex + 1;
       const { results } = await this.db.prepare(
-        `SELECT chunk_index, content FROM document_chunks 
+        `SELECT chunk_index, content, page_start, page_end FROM document_chunks 
          WHERE document_id = ? AND chunk_index BETWEEN ? AND ? 
          ORDER BY chunk_index ASC`
-      ).bind(docId, minIndex, maxIndex).all<{ chunk_index: number; content: string }>();
+      ).bind(docId, minIndex, maxIndex).all<{ chunk_index: number; content: string; page_start?: number; page_end?: number }>();
 
       return results || [];
     } catch {
@@ -218,12 +223,17 @@ export class D1DocumentRepository {
   }
 
   /**
-   * Fetches all active documents (is_active = 1)
+   * Fetches all active documents (is_active = 1) for a given tenant/user scope
    */
-  public async listActiveDocuments(userId = 'user_default'): Promise<any[]> {
+  public async listActiveDocuments(userId = 'user_default', tenantId = 'tenant_default'): Promise<any[]> {
     const { results } = await this.db.prepare(
-      'SELECT doc_id, file_name, user_id, version, is_active, total_pages, total_chunks, processing_status, created_at FROM document_records WHERE is_active = 1 ORDER BY created_at DESC'
-    ).all();
+      `SELECT doc_id, file_name, tenant_id, user_id, version, is_active, total_pages, total_chunks, processing_status, created_at 
+       FROM document_records 
+       WHERE is_active = 1 
+         AND (user_id = ? OR ? = 'user_default')
+         AND (tenant_id = ? OR ? = 'tenant_default')
+       ORDER BY created_at DESC`
+    ).bind(userId, userId, tenantId, tenantId).all();
     return results || [];
   }
 }

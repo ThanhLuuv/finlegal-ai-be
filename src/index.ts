@@ -107,6 +107,12 @@ app.get('/api/health', (c) => {
 // 2. Admin Seed Endpoint - Populates D1 with Enterprise Sales Data
 app.post('/api/admin/seed', async (c) => {
   try {
+    const adminKey = c.req.header('x-admin-key');
+    const expectedKey = c.env.ADMIN_SECRET_KEY || 'admin_secret_default';
+    if (!adminKey || adminKey !== expectedKey) {
+      return c.json({ error: 'UNAUTHORIZED: Quyền truy cập quản trị bị từ chối.' }, 401);
+    }
+
     const d1Service = new D1DatabaseService(c.env.DB);
     const { results: existing } = await c.env.DB.prepare('SELECT COUNT(*) as count FROM sales_transactions').all<{ count: number }>();
     
@@ -125,14 +131,14 @@ app.post('/api/admin/seed', async (c) => {
        VALUES ('TX-1004', 'GlobalTech Industries', 'CTR-2024-002', 'Q2-2024', 250000.00, 'COMPLETED', '2024-06-28')`
     ];
 
-    for (const query of seedQueries) {
-      await c.env.DB.prepare(query).run();
+    for (const q of seedQueries) {
+      await c.env.DB.prepare(q).run();
     }
 
-    return c.json({ message: 'D1 Database successfully seeded with production sales dataset.', inserted: seedQueries.length });
+    return c.json({ success: true, message: 'Thêm dữ liệu mẫu doanh nghiệp vào D1 Database thành công.' });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    return c.json({ error: errorMsg }, 500);
+    return c.json({ error: `Lỗi khởi tạo dữ liệu mẫu: ${errorMsg}` }, 500);
   }
 });
 
@@ -168,7 +174,7 @@ app.delete('/api/documents/:docId', async (c) => {
     const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
 
     // 1. Mark status = DELETING to prevent concurrent retrieval
-    await d1Repo.updateStatus(docId, 'FAILED', { errorCode: 'DELETING', errorMessage: 'Document deletion in progress' });
+    await d1Repo.updateStatus(docId, 'DELETING', { errorMessage: 'Document deletion in progress' });
 
     // 2. Fetch all vector IDs from D1 and delete exact vectors from Cloudflare Vectorize (Idempotent)
     try {

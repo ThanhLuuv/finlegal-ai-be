@@ -17,7 +17,7 @@ export class SupervisorAgent extends BaseAgent {
     const prompt = state.userPrompt;
     const hasSelectedDoc = Boolean(state.selectedDocId);
 
-    let userIntent: UserIntent = hasSelectedDoc ? 'RAG_ONLY' : 'HYBRID_AUDIT';
+    let userIntent: UserIntent = 'RAG_ONLY';
     let reasoning = 'Dynamically routing intent using LLM semantic understanding.';
 
     try {
@@ -45,7 +45,7 @@ Respond strictly in JSON format:
           role: 'user',
           content: prompt
         }
-      ]);
+      ], { task: 'QUERY_REWRITE' });
       
       if (classification && classification.intent) {
         userIntent = classification.intent;

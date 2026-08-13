@@ -43,6 +43,7 @@ export interface MultiAgentState {
   sqlData?: any;
   auditReport?: AuditReport;
   thoughtProcess: AgentThoughtStep[];
+  citations?: Array<{ documentName: string; sectionTitle: string; pageStart: number; pageEnd: number }>;
   finalAnswer: string;
 }
 

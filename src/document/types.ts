@@ -1,13 +1,18 @@
 // Generic Production Document Model Types & Interfaces
 
 export type ProcessingStatus = 
+  | 'UPLOADING'
   | 'UPLOADED' 
-  | 'PARSING' 
+  | 'PARSING'
+  | 'EXTRACTING' 
+  | 'STRUCTURING' 
   | 'CHUNKING' 
   | 'EMBEDDING' 
   | 'INDEXING' 
   | 'READY' 
   | 'FAILED'
+  | 'DELETING'
+  | 'DELETED'
   | 'PROCESSING';
 
 export type BlockType = 'heading' | 'paragraph' | 'table' | 'list' | 'clause' | 'section' | 'other';
@@ -51,6 +56,7 @@ export interface DocumentTable {
 
 export interface ParsedDocument {
   documentId: string;
+  tenantId?: string;
   title?: string;
   pages: DocumentPage[];
   sections: DocumentSection[];
@@ -70,6 +76,7 @@ export interface ParsedDocument {
 
 export interface ChunkMetadata {
   docId: string;
+  tenantId?: string;
   fileName: string;
   pageStart?: number;
   pageEnd?: number;
@@ -84,6 +91,7 @@ export interface ChunkMetadata {
 export interface RagChunk {
   id: string;
   documentId: string;
+  tenantId?: string;
   sectionId?: string;
   content: string;
   chunkType: BlockType;

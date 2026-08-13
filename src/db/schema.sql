@@ -22,14 +22,15 @@ CREATE TABLE IF NOT EXISTS document_records (
     doc_id TEXT NOT NULL UNIQUE,
     file_name TEXT NOT NULL,
     r2_key TEXT NOT NULL,
+    tenant_id TEXT DEFAULT 'tenant_default',
     user_id TEXT DEFAULT 'user_default',
     version TEXT DEFAULT 'v1',
     is_active INTEGER DEFAULT 1,     -- 1 = Active version, 0 = Inactive / Superseded
     parent_doc_id TEXT,             -- Reference to previous version ID if updated
     total_pages INTEGER NOT NULL DEFAULT 1,
     total_chunks INTEGER NOT NULL DEFAULT 0,
-    processing_status TEXT DEFAULT 'UPLOADED', -- 'UPLOADED', 'PARSING', 'CHUNKING', 'EMBEDDING', 'INDEXING', 'READY', 'FAILED'
-    processing_version TEXT DEFAULT 'v2.0',
+    processing_status TEXT DEFAULT 'UPLOADED', -- 'UPLOADING', 'UPLOADED', 'EXTRACTING', 'STRUCTURING', 'CHUNKING', 'EMBEDDING', 'INDEXING', 'READY', 'FAILED', 'DELETING', 'DELETED'
+    processing_version TEXT DEFAULT 'v3.0',
     extraction_method TEXT,
     processed_at DATETIME,
     error_code TEXT,
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS document_records (
 CREATE TABLE IF NOT EXISTS document_sections (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
+    tenant_id TEXT DEFAULT 'tenant_default',
     title TEXT,
     section_path TEXT NOT NULL,     -- JSON array string, e.g. ["Điều 7", "Khoản 7.2"]
     page_start INTEGER,
@@ -56,6 +58,7 @@ CREATE TABLE IF NOT EXISTS document_sections (
 CREATE TABLE IF NOT EXISTS document_chunks (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
+    tenant_id TEXT DEFAULT 'tenant_default',
     section_id TEXT,
     chunk_index INTEGER NOT NULL,
     chunk_type TEXT NOT NULL,       -- 'paragraph', 'section', 'table', 'clause'
@@ -76,6 +79,7 @@ CREATE TABLE IF NOT EXISTS chat_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
     trace_id TEXT NOT NULL,
+    tenant_id TEXT DEFAULT 'tenant_default',
     user_prompt TEXT NOT NULL,
     intent TEXT NOT NULL,           -- 'RAG_ONLY', 'SQL_ONLY', 'HYBRID_AUDIT', 'GENERAL_CHAT'
     thought_process TEXT NOT NULL,  -- JSON string of step-by-step reasoning
