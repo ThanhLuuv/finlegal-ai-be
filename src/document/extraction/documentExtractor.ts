@@ -27,7 +27,12 @@ export class DocumentExtractorFactory implements IDocumentExtractor {
       // 1. Try Standard PDF Extraction
       const result = await this.pdfExtractor.extract(buffer, fileName);
       
-      if (result.text && result.text.trim().length > 10) {
+      const isReadableText = result.text &&
+        result.text.trim().length > 10 &&
+        !isCMapFontGarbage(result.text) &&
+        !isBinaryNoise(result.text);
+
+      if (isReadableText) {
         return result;
       }
 
