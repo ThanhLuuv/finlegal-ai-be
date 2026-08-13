@@ -24,6 +24,21 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
+function extractLLMResponseText(res: any): string | null {
+  if (!res) return null;
+  if (typeof res === 'string' && res.trim().length > 0) return res.trim();
+  if (typeof res.response === 'string' && res.response.trim().length > 0) return res.response.trim();
+  if (res.result && typeof res.result === 'string' && res.result.trim().length > 0) return res.result.trim();
+  if (res.result && typeof res.result.response === 'string' && res.result.response.trim().length > 0) return res.result.response.trim();
+  if (res.choices && res.choices[0] && res.choices[0].message && typeof res.choices[0].message.content === 'string') {
+    return res.choices[0].message.content.trim();
+  }
+  if (res.choices && res.choices[0] && typeof res.choices[0].text === 'string') {
+    return res.choices[0].text.trim();
+  }
+  return null;
+}
+
 export class LLMProviderService {
   private ai: Ai;
   private geminiApiKey?: string;
@@ -59,8 +74,9 @@ export class LLMProviderService {
           ]
         });
 
-        if (response && response.response && response.response.trim().length > 20) {
-          return response.response.trim();
+        const extractedText = extractLLMResponseText(response);
+        if (extractedText && extractedText.trim().length > 20) {
+          return extractedText.trim();
         }
       } catch (cfErr) {
         console.warn('Workers AI @cf/google/gemini-2.5-flash extraction notice:', cfErr);
@@ -202,21 +218,6 @@ export class LLMProviderService {
         '@cf/meta/llama-3.1-8b-instruct'
       ];
     }
-
-function extractLLMResponseText(res: any): string | null {
-  if (!res) return null;
-  if (typeof res === 'string' && res.trim().length > 0) return res.trim();
-  if (typeof res.response === 'string' && res.response.trim().length > 0) return res.response.trim();
-  if (res.result && typeof res.result === 'string' && res.result.trim().length > 0) return res.result.trim();
-  if (res.result && typeof res.result.response === 'string' && res.result.response.trim().length > 0) return res.result.response.trim();
-  if (res.choices && res.choices[0] && res.choices[0].message && typeof res.choices[0].message.content === 'string') {
-    return res.choices[0].message.content.trim();
-  }
-  if (res.choices && res.choices[0] && typeof res.choices[0].text === 'string') {
-    return res.choices[0].text.trim();
-  }
-  return null;
-}
 
     // 1. Try Cloudflare Workers AI Edge models first
     for (const modelName of models) {
