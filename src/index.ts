@@ -198,30 +198,16 @@ Hợp đồng này được lập thành 04 bản có giá trị pháp lý như 
     const enc = new TextEncoder();
     const bytes = enc.encode(sampleContractContent);
 
-    // Save to R2
-    await c.env.R2.put(r2Key, bytes, {
-      httpMetadata: { contentType: 'text/plain; charset=utf-8' }
-    });
-
-    // Create D1 initial record
-    await d1Repo.createInitialRecord({
-      docId,
-      fileName,
-      r2Key,
-      tenantId: 'tenant_default',
-      userId: 'user_default',
-      version: 'v1'
-    });
-
-    // Mark as demo document
-    await c.env.DB.prepare('UPDATE document_records SET is_demo = 1 WHERE doc_id = ?').bind(docId).run();
-
-    // Process pipeline
+    // Process pipeline (handles R2 storage & D1 initial record creation automatically)
     const llm = new LLMProviderService(c.env.AI);
     const pipeline = new DocumentPipeline(llm, c.env.DB, c.env.VECTORIZE, c.env.R2, c.env.AI);
     
-    // Process text
     await pipeline.processDocument(docId, fileName, bytes.buffer.slice(0) as ArrayBuffer);
+
+    // Mark as demo document
+    try {
+      await c.env.DB.prepare('UPDATE document_records SET is_demo = 1 WHERE doc_id = ?').bind(docId).run();
+    } catch {}
 
     return c.json({ success: true, docId, message: 'Đã nạp tài liệu mẫu dùng thử thành công!' });
   } catch (err) {
