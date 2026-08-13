@@ -84,19 +84,22 @@ export function isPDFSyntaxChunk(text: string): boolean {
 export function isCMapFontGarbage(text: string): boolean {
   if (!text || text.trim().length === 0) return true;
 
-  
-  // Count Latin1 extended font table noise characters (e.g. È, Ù, ò, Æ, œ, å, Œ, Ë, ì, ú, Þ, ×, ž, ï, þ, ø, ÿ, Õ, Ô, Ò)
-  const fontGarbageSymbols = text.match(/[\u0080-\u00BF\u00C0-\u00C5\u00C7-\u00CB\u00D0-\u00D4\u00D7-\u00DD\u00DF-\u00E5\u00E7-\u00EB\u00F0-\u00F4\u00F7-\u00FD]/g) || [];
-  const ratio = fontGarbageSymbols.length / text.length;
-  return ratio > 0.03;
+  // Unprintable control codes and replacement bytes
+  const controlGarbage = text.match(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/g) || [];
+  if (controlGarbage.length / text.length > 0.1) return true;
+
+  // Check ratio of valid readable characters (including Vietnamese diacritics & standard punctuation)
+  const validReadableChars = text.match(/[A-Za-z0-9À-ỹ\u0100-\u024F\u1EA0-\u1EF9\s\.,:\-\(\)\/\$\%\&\@\+\=\_\;\"\'\?\!\<\>\[\]\{\}]/g) || [];
+  const validRatio = validReadableChars.length / text.length;
+
+  return validRatio < 0.35;
 }
 
 export function isBinaryNoise(text: string): boolean {
   if (!text || text.trim().length < 4) return true;
-  if (isCMapFontGarbage(text)) return true;
-  const validChars = text.match(/[A-Za-z0-9À-ỹ\s\.,:\-\(\)\/\$]/g) || [];
+  const validChars = text.match(/[A-Za-z0-9À-ỹ\u0100-\u024F\u1EA0-\u1EF9\s\.,:\-\(\)\/\$\%\&\@\+\=\_\;\"\'\?\!\<\>\[\]\{\}]/g) || [];
   const validRatio = validChars.length / text.length;
-  return validRatio < 0.45;
+  return validRatio < 0.35;
 }
 
 async function decompressFlate(data: Uint8Array): Promise<Uint8Array | null> {
