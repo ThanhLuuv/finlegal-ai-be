@@ -36,6 +36,15 @@ function extractLLMResponseText(res: any): string | null {
   if (res.choices && res.choices[0] && typeof res.choices[0].text === 'string') {
     return res.choices[0].text.trim();
   }
+  if (typeof res === 'object') {
+    try {
+      const jsonStr = JSON.stringify(res);
+      const textMatch = jsonStr.match(/"response"\s*:\s*"([^"]+)"/i) || jsonStr.match(/"content"\s*:\s*"([^"]+)"/i) || jsonStr.match(/"text"\s*:\s*"([^"]+)"/i);
+      if (textMatch && textMatch[1] && textMatch[1].length > 5) {
+        return textMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      }
+    } catch {}
+  }
   return null;
 }
 
@@ -103,8 +112,8 @@ export class LLMProviderService {
 
     const visionModels = [
       '@cf/qwen/qwen3-30b-a3b-fp8',
-      '@cf/meta/llama-3.1-8b-instruct',
-      '@cf/qwen/qwen1.5-14b-chat-awq'
+      '@cf/meta/llama-3-8b-instruct',
+      '@cf/mistral/mistral-7b-instruct-v0.1'
     ];
 
     if (this.ai && compactText.trim().length > 10) {
@@ -168,20 +177,20 @@ export class LLMProviderService {
     if (task === 'SMALL_LLM' || task === 'QUERY_REWRITE') {
       models = [
         '@cf/qwen/qwen3-30b-a3b-fp8',
-        '@cf/meta/llama-3.1-8b-instruct',
-        '@cf/qwen/qwen1.5-14b-chat-awq'
+        '@cf/meta/llama-3-8b-instruct',
+        '@cf/mistral/mistral-7b-instruct-v0.1'
       ];
     } else if (task === 'PRIMARY_LLM' || task === 'MAIN_ANSWER') {
       models = [
         '@cf/qwen/qwen3-30b-a3b-fp8',
-        '@cf/meta/llama-3.1-8b-instruct',
-        '@cf/qwen/qwen1.5-14b-chat-awq'
+        '@cf/meta/llama-3-8b-instruct',
+        '@cf/mistral/mistral-7b-instruct-v0.1'
       ];
     } else {
       models = [
         '@cf/qwen/qwen3-30b-a3b-fp8',
-        '@cf/meta/llama-3.1-8b-instruct',
-        '@cf/qwen/qwen1.5-14b-chat-awq'
+        '@cf/meta/llama-3-8b-instruct',
+        '@cf/mistral/mistral-7b-instruct-v0.1'
       ];
     }
 
