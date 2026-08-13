@@ -88,22 +88,12 @@ export function isCMapFontGarbage(text: string): boolean {
 
   // 1. Unprintable control characters check
   const controlGarbage = text.match(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/g) || [];
-  if (controlGarbage.length / text.length > 0.02) return true;
+  if (controlGarbage.length / text.length > 0.25) return true;
 
   // 2. Exact Vietnamese Unicode & English Alphanumeric & Punctuation ratio check
   const validReadableChars = text.match(VIETNAMESE_TEXT_REGEX) || [];
   const validRatio = validReadableChars.length / text.length;
-  if (validRatio < 0.75) return true;
-
-  // 3. Word token structure sanity check
-  const tokens = text.trim().split(/\s+/).filter(t => t.length > 0);
-  if (tokens.length >= 4) {
-    const validTokens = tokens.filter(t => {
-      const match = t.match(VIETNAMESE_TEXT_REGEX);
-      return match && match.length === t.length;
-    });
-    if (validTokens.length / tokens.length < 0.65) return true;
-  }
+  if (validRatio < 0.20) return true;
 
   return false;
 }

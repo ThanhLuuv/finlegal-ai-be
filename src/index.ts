@@ -178,12 +178,13 @@ app.delete('/api/documents/:docId', async (c) => {
     // 1. Mark status = DELETING to prevent concurrent retrieval
     await d1Repo.updateStatus(docId, 'DELETING', { errorMessage: 'Document deletion in progress' });
 
-    // 2. Fetch all vector IDs from D1 and delete exact vectors from Cloudflare Vectorize (Idempotent)
+    // 2. Fetch vector IDs from D1 + generate fallback chunk IDs up to 300 chunks
+    const d1VectorIds = await d1Repo.getChunkVectorIds(docId);
+    const generatedChunkIds = Array.from({ length: 300 }, (_, i) => `${docId}_chunk_${i}`);
+    const allIdsToDelete = Array.from(new Set([...d1VectorIds, ...generatedChunkIds]));
+
     try {
-      const vectorIds = await d1Repo.getChunkVectorIds(docId);
-      if (vectorIds.length > 0) {
-        await vectorRepo.deleteByIds(vectorIds);
-      }
+      await vectorRepo.deleteByIds(allIdsToDelete);
     } catch (vecErr) {
       console.warn('Vectorize deletion warning (retrying allowed):', vecErr);
     }

@@ -167,18 +167,17 @@ export class VectorRepository {
       returnMetadata: 'all'
     });
 
-    // Fallback: If filtered docId search yields 0 matches, search all vector indexes
-    if ((!matches || !matches.matches || matches.matches.length === 0) && Object.keys(filterObj).length > 0) {
-      matches = await this.vectorize.query(queryVector, {
-        topK,
-        returnMetadata: 'all'
-      });
-    }
-
     if (!matches || !matches.matches) return [];
 
+    // Enforce strict docId scope filtering if documentIds was specified
+    const targetDocId = filterObj.docId;
+    let filteredMatches = matches.matches;
+    if (targetDocId) {
+      filteredMatches = matches.matches.filter(m => String(m.metadata?.docId || '') === targetDocId);
+    }
 
-    return matches.matches.map(m => {
+
+    return filteredMatches.map(m => {
       const rawPath = String(m.metadata?.sectionPath || '[]');
       let sectionPath: string[] = [];
       try {
