@@ -137,6 +137,7 @@ export async function extractLegacyPdfText(buffer: ArrayBuffer): Promise<string>
   const decompressedTextBlocks: string[] = [];
   let searchPos = 0;
 
+  // Stage 1: Decompress Flate Streams
   while (searchPos < fullLatin1Str.length) {
     const streamIdx = fullLatin1Str.indexOf('stream', searchPos);
     if (streamIdx === -1) break;
@@ -160,12 +161,12 @@ export async function extractLegacyPdfText(buffer: ArrayBuffer): Promise<string>
           decompressedStr = latin1Decoder.decode(decompressed);
         }
 
-        // 1. Extract Parentheses Strings: (text) Tj or (text) TJ
+        // 1. Extract Parentheses Strings: (text) Tj or (text) TJ or [ (text) ] TJ
         const strInside = decompressedStr.match(/\(([^)]+)\)/g);
         if (strInside) {
           const joined = strInside.map(s => s.slice(1, -1)).join(' ');
           const cleaned = cleanPrintableText(joined);
-          if (cleaned.length > 0 && !isCMapFontGarbage(cleaned)) {
+          if (cleaned.length > 0) {
             decompressedTextBlocks.push(cleaned);
           }
         }
@@ -175,7 +176,7 @@ export async function extractLegacyPdfText(buffer: ArrayBuffer): Promise<string>
         if (hexInside) {
           const decodedHexes = hexInside
             .map(h => decodeHexPDFString(h.slice(1, -1)))
-            .filter(d => d && d.trim().length > 0 && !isCMapFontGarbage(d));
+            .filter(d => d && d.trim().length > 0);
           if (decodedHexes.length > 0) {
             decompressedTextBlocks.push(decodedHexes.join(' '));
           }
@@ -188,12 +189,45 @@ export async function extractLegacyPdfText(buffer: ArrayBuffer): Promise<string>
 
   if (decompressedTextBlocks.length > 0) {
     const fullText = stripPDFSyntaxNoise(decompressedTextBlocks.join('\n\n'));
-    if (fullText.length > 10 && !isBinaryNoise(fullText) && !isCMapFontGarbage(fullText)) {
+    if (fullText.length > 10 && !isBinaryNoise(fullText)) {
       return fullText;
     }
   }
 
-  // NOTE: If decompressed streams yield no valid text or only CMap font garbage,
-  // return empty string so the system automatically triggers Multimodal AI extraction!
+  // Stage 2: Fallback BT ... ET Text Object Scanner across raw PDF
+  const btEtMatches = fullLatin1Str.match(/BT[\s\S]*?ET/g);
+  if (btEtMatches && btEtMatches.length > 0) {
+    const extractedBtEt: string[] = [];
+    for (const block of btEtMatches) {
+      const parenthesized = block.match(/\(([^)]+)\)/g);
+      if (parenthesized) {
+        const s = parenthesized.map(p => p.slice(1, -1)).join(' ');
+        const cleanS = cleanPrintableText(stripPDFSyntaxNoise(s));
+        if (cleanS.length > 0) extractedBtEt.push(cleanS);
+      }
+    }
+    if (extractedBtEt.length > 0) {
+      const combinedBtEt = extractedBtEt.join('\n');
+      if (combinedBtEt.length > 10) {
+        return combinedBtEt;
+      }
+    }
+  }
+
+  // Stage 3: Universal Printable Text Sequence Scanner
+  const printableSequences = fullLatin1Str.match(/[A-Za-z0-9À-ỹ\u0100-\u024F\u1EA0-\u1EF9\s\.,:\-\(\)\/\$\%\&\@\+\=\_\;\"\'\?\!\<\>]{6,}/g);
+  if (printableSequences) {
+    const validSequences = printableSequences
+      .map(s => cleanPrintableText(stripPDFSyntaxNoise(s)))
+      .filter(s => s.length >= 6 && !isPDFSyntaxChunk(s));
+
+    if (validSequences.length > 0) {
+      const combinedSequences = validSequences.join('\n');
+      if (combinedSequences.length > 15) {
+        return combinedSequences;
+      }
+    }
+  }
+
   return '';
 }
