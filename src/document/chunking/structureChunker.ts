@@ -60,20 +60,23 @@ export class StructureChunker {
         });
         chunkIndex++;
       } else {
-        // Sub-chunk long sections into ~800-1000 char blocks
+        // Sub-chunk long sections into ~800-1000 char blocks with sliding window fallback
         const paragraphs = sectionContent.split(/\n\s*\n/);
         let currentChunkText = '';
 
-        for (const para of paragraphs) {
-          if ((currentChunkText + '\n\n' + para).length > 1000 && currentChunkText.length > 0) {
+        const pushChunkText = (rawContent: string) => {
+          const content = rawContent.trim();
+          if (!content) return;
+
+          if (content.length <= 1000) {
             chunks.push({
               id: `${doc.documentId}_chunk_${chunkIndex}`,
               documentId: doc.documentId,
               sectionId: section.id,
-              content: currentChunkText.trim(),
+              content,
               chunkType: 'paragraph',
-              tokenCount: Math.ceil(currentChunkText.length / 4),
-              contentHash: generateHash(currentChunkText),
+              tokenCount: Math.ceil(content.length / 4),
+              contentHash: generateHash(content),
               embeddingVersion: 'v1',
               pageStart: section.pageStart || 1,
               pageEnd: section.pageEnd || 1,
@@ -86,11 +89,53 @@ export class StructureChunker {
                 sectionPath: section.sectionPath || [section.title || 'Mục chính'],
                 chunkIndex,
                 documentType: doc.metadata.documentType || 'generic',
-                containsTable: currentChunkText.includes('|'),
-                text: currentChunkText.trim()
+                containsTable: content.includes('|'),
+                text: content
               }
             });
             chunkIndex++;
+          } else {
+            // Sliding window split for long continuous paragraphs
+            let start = 0;
+            while (start < content.length) {
+              const end = Math.min(start + 1000, content.length);
+              const subText = content.substring(start, end).trim();
+              if (subText.length > 0) {
+                chunks.push({
+                  id: `${doc.documentId}_chunk_${chunkIndex}`,
+                  documentId: doc.documentId,
+                  sectionId: section.id,
+                  content: subText,
+                  chunkType: 'paragraph',
+                  tokenCount: Math.ceil(subText.length / 4),
+                  contentHash: generateHash(subText),
+                  embeddingVersion: 'v1',
+                  pageStart: section.pageStart || 1,
+                  pageEnd: section.pageEnd || 1,
+                  metadata: {
+                    docId: doc.documentId,
+                    fileName: doc.metadata.fileName,
+                    pageStart: section.pageStart || 1,
+                    pageEnd: section.pageEnd || 1,
+                    sectionTitle: section.title || 'Mục chính',
+                    sectionPath: section.sectionPath || [section.title || 'Mục chính'],
+                    chunkIndex,
+                    documentType: doc.metadata.documentType || 'generic',
+                    containsTable: subText.includes('|'),
+                    text: subText
+                  }
+                });
+                chunkIndex++;
+              }
+              if (end >= content.length) break;
+              start += 800; // 200 char overlap
+            }
+          }
+        };
+
+        for (const para of paragraphs) {
+          if ((currentChunkText + '\n\n' + para).length > 1000 && currentChunkText.length > 0) {
+            pushChunkText(currentChunkText);
             currentChunkText = para;
           } else {
             currentChunkText = currentChunkText ? `${currentChunkText}\n\n${para}` : para;
@@ -98,31 +143,7 @@ export class StructureChunker {
         }
 
         if (currentChunkText.trim().length > 0) {
-          chunks.push({
-            id: `${doc.documentId}_chunk_${chunkIndex}`,
-            documentId: doc.documentId,
-            sectionId: section.id,
-            content: currentChunkText.trim(),
-            chunkType: 'paragraph',
-            tokenCount: Math.ceil(currentChunkText.length / 4),
-            contentHash: generateHash(currentChunkText),
-            embeddingVersion: 'v1',
-            pageStart: section.pageStart || 1,
-            pageEnd: section.pageEnd || 1,
-            metadata: {
-              docId: doc.documentId,
-              fileName: doc.metadata.fileName,
-              pageStart: section.pageStart || 1,
-              pageEnd: section.pageEnd || 1,
-              sectionTitle: section.title || 'Mục chính',
-              sectionPath: section.sectionPath || [section.title || 'Mục chính'],
-              chunkIndex,
-              documentType: doc.metadata.documentType || 'generic',
-              containsTable: currentChunkText.includes('|'),
-              text: currentChunkText.trim()
-            }
-          });
-          chunkIndex++;
+          pushChunkText(currentChunkText);
         }
       }
     }

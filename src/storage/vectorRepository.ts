@@ -3,6 +3,11 @@
 import { RagChunk, ChunkMetadata } from '../document/types';
 import { RetrievalScope } from '../rag/types';
 
+function safeTruncateText(text: string, maxChars = 2500): string {
+  if (!text) return '';
+  return text.length <= maxChars ? text : text.substring(0, maxChars);
+}
+
 export class VectorRepository {
   private vectorize: VectorizeIndex;
   private ai: Ai;
@@ -17,10 +22,11 @@ export class VectorRepository {
    */
   public async generateEmbedding(text: string): Promise<number[]> {
     const modelName = '@cf/baai/bge-m3';
+    const safeText = safeTruncateText(text, 2500);
     let attempts = 0;
     while (attempts < 3) {
       try {
-        const res = await (this.ai as any).run(modelName, { text: [text] });
+        const res = await (this.ai as any).run(modelName, { text: [safeText] });
         if (res && res.data && res.data[0]) {
           return res.data[0];
         }
@@ -50,7 +56,8 @@ export class VectorRepository {
     const modelName = '@cf/baai/bge-m3';
     const batchResults = await Promise.all(
       batches.map(async (batchTexts) => {
-        const res = await (this.ai as any).run(modelName, { text: batchTexts });
+        const safeBatch = batchTexts.map(t => safeTruncateText(t, 2500));
+        const res = await (this.ai as any).run(modelName, { text: safeBatch });
         if (res && res.data && Array.isArray(res.data)) {
           return res.data;
         }
