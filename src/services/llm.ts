@@ -58,34 +58,10 @@ export class LLMProviderService {
 
     const base64Data = arrayBufferToBase64(pdfBuffer);
 
-    // 1. Try Cloudflare Workers AI @cf/google/gemini-2.5-flash directly
-    if (this.ai) {
-      try {
-        const response = await (this.ai as any).run('@cf/google/gemini-2.5-flash', {
-          messages: [
-            {
-              role: 'system',
-              content: 'You are FinLegal AI Document Extractor. Extract ALL text, candidate names, contact details, skills, work experience, section titles, and tables accurately into clean Markdown format. Return ONLY the extracted text.'
-            },
-            {
-              role: 'user',
-              content: `FILENAME: ${fileName}\n\nPDF BASE64 DATA:\n${base64Data}`
-            }
-          ]
-        });
-
-        const extractedText = extractLLMResponseText(response);
-        if (extractedText && extractedText.trim().length > 20) {
-          return extractedText.trim();
-        }
-      } catch (cfErr) {
-        console.warn('Workers AI @cf/google/gemini-2.5-flash extraction notice:', cfErr);
-      }
-    }
-
-    // 2. Try Gemini Multimodal Vision API (Natively parses PDFs directly)
+    // 1. Try Gemini API directly if GEMINI_API_KEY is provided
     if (this.geminiApiKey) {
       try {
+        console.log('[LLM Vision] Calling Google Gemini API directly...');
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.geminiApiKey}`;
         const res = await fetch(url, {
           method: 'POST',
@@ -110,57 +86,47 @@ export class LLMProviderService {
         if (res.ok) {
           const data = await res.json() as any;
           const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (text && text.trim().length > 20) {
+          if (text && text.trim().length > 10) {
+            console.log(`[LLM Vision Success] Gemini API extracted ${text.length} chars.`);
             return text.trim();
           }
         }
       } catch (err) {
-        console.warn('Gemini 2.0 Multimodal PDF extraction notice:', err);
+        console.warn('[LLM Vision Notice] Gemini API call notice:', err);
       }
     }
 
-    // 3. Try OpenAI / Router Multimodal Endpoint
-    if (this.openaiApiKey) {
-      const endpoints = [
-        'https://agentrouter.org/v1/chat/completions',
-        'https://api.openai.com/v1/chat/completions'
-      ];
-      const models = ['gpt-4o', 'gpt-4o-mini'];
+    // 2. Try Workers AI Models (@cf/qwen/qwen3-30b-a3b-fp8, @cf/meta/llama-3.3-70b-instruct)
+    const visionModels = [
+      '@cf/qwen/qwen3-30b-a3b-fp8',
+      '@cf/meta/llama-3.3-70b-instruct',
+      '@cf/google/gemini-2.5-flash'
+    ];
 
-      for (const endpoint of endpoints) {
-        for (const modelName of models) {
-          try {
-            const res = await fetch(endpoint, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.openaiApiKey}`
+    if (this.ai) {
+      for (const modelName of visionModels) {
+        try {
+          console.log(`[LLM Vision] Calling Cloudflare Workers AI Model: ${modelName}...`);
+          const response = await (this.ai as any).run(modelName, {
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an expert AI Document Extractor. Extract ALL text, candidate names, contact details, skills, work experience, section titles, and tables accurately into clean Markdown format. Return ONLY the extracted text.'
               },
-              body: JSON.stringify({
-                model: modelName,
-                messages: [
-                  {
-                    role: 'system',
-                    content: 'You are FinLegal AI Document Extractor. Extract ALL text, candidate names, skills, clauses, experience, and tables accurately into clean Markdown format. Return ONLY the extracted Markdown text.'
-                  },
-                  {
-                    role: 'user',
-                    content: `FILENAME: ${fileName}\n\nPDF BASE64 DATA:\n${base64Data}`
-                  }
-                ]
-              })
-            });
-
-            if (res.ok) {
-              const data = await res.json() as any;
-              const text = data.choices?.[0]?.message?.content;
-              if (text && text.trim().length > 20) {
-                return text.trim();
+              {
+                role: 'user',
+                content: `FILENAME: ${fileName}\n\nDOCUMENT BASE64 DATA:\n${base64Data}`
               }
-            }
-          } catch {
-            // try next model
+            ]
+          }) as any;
+
+          const extractedText = extractLLMResponseText(response);
+          if (extractedText && extractedText.trim().length > 10) {
+            console.log(`[LLM Vision Success] Workers AI model ${modelName} extracted ${extractedText.length} chars.`);
+            return extractedText.trim();
           }
+        } catch (cfErr) {
+          console.warn(`[LLM Vision Notice] Workers AI model ${modelName} notice:`, cfErr);
         }
       }
     }
@@ -179,42 +145,39 @@ export class LLMProviderService {
 
     if (options.modelOverride) {
       try {
+        console.log(`[LLM Model Override] Calling ${options.modelOverride}...`);
         const response = await (this.ai as any).run(options.modelOverride, {
           messages: formattedMessages,
           temperature,
           max_tokens: maxTokens,
         });
-        if (response && response.response) return response.response;
+        const extracted = extractLLMResponseText(response);
+        if (extracted) return extracted;
       } catch (err) {
         console.warn(`Model override ${options.modelOverride} failed:`, err);
       }
     }
 
-    // Role-based model catalog mapping with @cf/google/gemini-2.5-flash as #1 primary
+    // Active Cloudflare Workers AI model catalog mapping
     let models: string[] = [];
 
     if (task === 'SMALL_LLM' || task === 'QUERY_REWRITE') {
       models = [
-        '@cf/google/gemini-2.5-flash',
+        '@cf/qwen/qwen3-30b-a3b-fp8',
         '@cf/meta/llama-3.1-8b-instruct',
-        '@cf/qwen/qwen1.5-14b-chat-awq'
+        '@cf/google/gemini-2.5-flash'
       ];
     } else if (task === 'PRIMARY_LLM' || task === 'MAIN_ANSWER') {
       models = [
-        '@cf/google/gemini-2.5-flash',
         '@cf/qwen/qwen3-30b-a3b-fp8',
-        '@cf/meta/llama-3.3-70b-instruct'
-      ];
-    } else if (task === 'COMPLEX_LLM') {
-      models = [
-        '@cf/google/gemini-2.5-flash',
         '@cf/meta/llama-3.3-70b-instruct',
-        '@cf/qwen/qwen3-30b-a3b-fp8'
+        '@cf/meta/llama-3.1-8b-instruct',
+        '@cf/google/gemini-2.5-flash'
       ];
     } else {
       models = [
-        '@cf/google/gemini-2.5-flash',
         '@cf/qwen/qwen3-30b-a3b-fp8',
+        '@cf/meta/llama-3.3-70b-instruct',
         '@cf/meta/llama-3.1-8b-instruct'
       ];
     }
@@ -222,6 +185,7 @@ export class LLMProviderService {
     // 1. Try Cloudflare Workers AI Edge models first
     for (const modelName of models) {
       try {
+        console.log(`[LLM Executing] Task: ${task} -> Calling Workers AI Model: ${modelName}...`);
         const response = await (this.ai as any).run(modelName, {
           messages: formattedMessages,
           temperature,
@@ -230,10 +194,11 @@ export class LLMProviderService {
 
         const extractedText = extractLLMResponseText(response);
         if (extractedText) {
+          console.log(`[LLM Success] Model ${modelName} returned ${extractedText.length} chars.`);
           return extractedText;
         }
       } catch (err) {
-        console.warn(`Workers AI model ${modelName} notice:`, err);
+        console.warn(`[LLM Notice] Workers AI model ${modelName} notice:`, String(err));
       }
     }
 
