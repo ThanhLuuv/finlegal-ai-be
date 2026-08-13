@@ -16,8 +16,10 @@ import { VectorizeService } from './services/vectorize';
 import { R2StorageService } from './services/r2';
 import { DocumentPipeline } from './document/documentPipeline';
 import { VectorRepository } from './storage/vectorRepository';
+import { D1DocumentRepository } from './storage/d1DocumentRepository';
 import { AnswerAgent } from './agents/answerAgent';
 import { LangfuseLogger } from './utils/langfuse';
+
 
 // Bindings Environment Interface for Workers
 export interface Bindings {
@@ -31,7 +33,9 @@ export interface Bindings {
   LANGFUSE_SECRET_KEY?: string;
   LANGFUSE_HOST?: string;
   TURNSTILE_SECRET_KEY?: string;
+  ADMIN_SECRET_KEY?: string;
 }
+
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -132,61 +136,89 @@ app.post('/api/admin/seed', async (c) => {
   }
 });
 
-// 3. Document Index Listing
+// 3. Document Records List Endpoint (Flow C §21)
 app.get('/api/documents', async (c) => {
   try {
-    const { results } = await c.env.DB.prepare('SELECT doc_id, file_name, total_pages, total_chunks, created_at FROM document_records ORDER BY created_at DESC').all();
-    return c.json({ documents: results || [] });
+    const d1Repo = new D1DocumentRepository(c.env.DB);
+    const documents = await d1Repo.listActiveDocuments();
+    return c.json({ documents });
   } catch (err) {
     return c.json({ documents: [] });
   }
 });
 
-// 3.5. Delete Document Endpoint (Cleans D1 Database, R2 Storage & Vectorize Index)
+// 3.1. Single Document Record Fetch
+app.get('/api/documents/:docId', async (c) => {
+  try {
+    const docId = c.req.param('docId');
+    const d1Repo = new D1DocumentRepository(c.env.DB);
+    const doc = await d1Repo.getDocumentRecord(docId);
+    if (!doc) return c.json({ error: 'Không tìm thấy tài liệu' }, 404);
+    return c.json({ document: doc });
+  } catch (err) {
+    return c.json({ error: 'Lỗi truy vấn tài liệu' }, 500);
+  }
+});
+
+// 3.5. Orchestrated Idempotent Delete Document Endpoint (Flow C §20 - DELETING status -> Vectors -> R2 -> D1)
 app.delete('/api/documents/:docId', async (c) => {
   try {
     const docId = c.req.param('docId');
+    const d1Repo = new D1DocumentRepository(c.env.DB);
+    const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
 
-    // 1. Delete vector embeddings from Cloudflare Vectorize Index
+    // 1. Mark status = DELETING to prevent concurrent retrieval
+    await d1Repo.updateStatus(docId, 'FAILED', { errorCode: 'DELETING', errorMessage: 'Document deletion in progress' });
+
+    // 2. Fetch all vector IDs from D1 and delete exact vectors from Cloudflare Vectorize (Idempotent)
     try {
-      const vectorIds = Array.from({ length: 35 }, (_, i) => `${docId}_chunk_${i}`);
-      await c.env.VECTORIZE.deleteByIds(vectorIds);
+      const vectorIds = await d1Repo.getChunkVectorIds(docId);
+      if (vectorIds.length > 0) {
+        await vectorRepo.deleteByIds(vectorIds);
+      }
     } catch (vecErr) {
-      console.warn('Vectorize deletion warning:', vecErr);
+      console.warn('Vectorize deletion warning (retrying allowed):', vecErr);
     }
 
-    // 2. Query document record from D1 to retrieve R2 storage key and delete file object
-    const doc = await c.env.DB.prepare('SELECT r2_key FROM document_records WHERE doc_id = ?').bind(docId).first<{ r2_key?: string }>();
+    // 3. Query document record from D1 to delete R2 storage file object (Idempotent)
+    const doc = await d1Repo.getDocumentRecord(docId);
     if (doc && doc.r2_key) {
       try {
         await c.env.R2.delete(doc.r2_key);
       } catch (r2Err) {
-        console.warn('R2 file deletion warning:', r2Err);
+        console.warn('R2 file deletion warning (retrying allowed):', r2Err);
       }
     }
 
-    // 3. Delete record from D1 Database
-    await c.env.DB.prepare('DELETE FROM document_records WHERE doc_id = ?').bind(docId).run();
+    // 4. Delete metadata from D1 Database (document_records, document_sections, document_chunks)
+    await d1Repo.deleteDocumentRecord(docId);
 
-    return c.json({ success: true, message: 'Đã xóa triệt để tài liệu, kho Vector và cơ sở dữ liệu D1 thành công.' });
+    return c.json({ success: true, message: 'Đã xóa triệt để tài liệu khỏi Vectorize, R2 và D1 thành công.' });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Không thể xóa tài liệu: ${errorMsg}` }, 500);
   }
 });
 
-// 3.6. Internal AI Tracing Logs Listing Endpoint
+// 3.6. Protected Internal AI Tracing Logs Listing Endpoint
 app.get('/api/admin/logs', async (c) => {
   try {
-    const { results } = await c.env.DB.prepare('SELECT id, session_id, trace_id, user_prompt, intent, thought_process, final_response, risk_level, created_at FROM chat_logs ORDER BY created_at DESC LIMIT 50').all();
+    const adminKey = c.req.header('x-admin-key');
+    const expectedKey = c.env.ADMIN_SECRET_KEY || 'admin_secret_default';
+    if (!adminKey || adminKey !== expectedKey) {
+      return c.json({ error: 'UNAUTHORIZED: Quyền truy cập quản trị bị từ chối.' }, 401);
+    }
+
+    const { results } = await c.env.DB.prepare('SELECT id, session_id, trace_id, user_prompt, intent, risk_level, created_at FROM chat_logs ORDER BY created_at DESC LIMIT 50').all();
     return c.json({ logs: results || [] });
   } catch (err) {
     return c.json({ logs: [] });
   }
 });
 
-// 4. PDF Document Upload, Chunking & Vector Ingestion Endpoint
-app.post('/api/upload', async (c) => {
+
+// 4. Document Upload, Validation & Pipeline Processing Endpoint (Flow A & Flow C)
+app.post('/api/documents', async (c) => {
   try {
     let formData: any;
     try {
@@ -212,8 +244,21 @@ app.post('/api/upload', async (c) => {
       arrayBuffer = buf;
     }
 
+    // Step 2 Validation: Check supported extension & empty buffer (Flow A §2)
+    const ext = fileName.split('.').pop()?.toLowerCase() || '';
+    const allowedExts = ['pdf', 'txt', 'csv'];
+    if (!allowedExts.includes(ext)) {
+      return c.json({ error: `INVALID_FILE: Định dạng file .${ext} chưa hỗ trợ bóc tách trực tiếp (Hiện hỗ trợ .pdf, .txt, .csv).` }, 400);
+    }
+
+
     if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-      return c.json({ error: 'Không thể đọc tập tin đã chọn.' }, 400);
+      return c.json({ error: 'INVALID_FILE: Tập tin tải lên bị rỗng hoặc không đúng định dạng.' }, 400);
+    }
+
+    // Size limit check (max 25MB)
+    if (arrayBuffer.byteLength > 25 * 1024 * 1024) {
+      return c.json({ error: 'INVALID_FILE: Dung lượng file vượt quá giới hạn 25MB.' }, 400);
     }
 
     const docId = `doc_${Date.now()}`;
@@ -240,6 +285,73 @@ app.post('/api/upload', async (c) => {
     return c.json({ error: `Lỗi xử lý tài liệu: ${errorMsg}` }, 500);
   }
 });
+
+// Legacy fallback endpoint mapping
+app.post('/api/upload', async (c) => {
+  return app.fetch(new Request(`${new URL(c.req.url).origin}/api/documents`, {
+    method: 'POST',
+    headers: c.req.raw.headers,
+    body: c.req.raw.body
+  }), c.env, c.executionCtx);
+});
+
+// 4.1. Document Version Update Endpoint (Flow C §21)
+app.post('/api/documents/:docId/version', async (c) => {
+  try {
+    const parentDocId = c.req.param('docId');
+    let formData: any;
+    try {
+      formData = await c.req.formData();
+    } catch {
+      formData = await c.req.parseBody();
+    }
+
+    const file = formData.get ? formData.get('file') : formData['file'];
+    if (!file || typeof file === 'string' || !('arrayBuffer' in file)) {
+      return c.json({ error: 'Vui lòng chọn file phiên bản mới.' }, 400);
+    }
+
+    const fileName = file.name || 'document_v2.pdf';
+    const arrayBuffer = (await file.arrayBuffer()) as ArrayBuffer;
+
+    const d1Repo = new D1DocumentRepository(c.env.DB);
+    const parentDoc = await d1Repo.getDocumentRecord(parentDocId);
+    let nextVersion = 'v2';
+    if (parentDoc && parentDoc.version) {
+      const match = parentDoc.version.match(/\d+/);
+      const currentVerNum = match ? parseInt(match[0], 10) : 1;
+      nextVersion = `v${currentVerNum + 1}`;
+    }
+
+    const newDocId = `doc_${Date.now()}`;
+    const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY, c.env.OPENAI_API_KEY);
+    const pipeline = new DocumentPipeline(
+      llm,
+      c.env.DB,
+      c.env.VECTORIZE,
+      c.env.R2,
+      c.env.AI
+    );
+
+    const result = await pipeline.processDocument(newDocId, fileName, arrayBuffer, {
+      version: nextVersion,
+      parentDocId
+    });
+
+    return c.json({
+      success: true,
+      docId: result.docId,
+      version: nextVersion,
+      fileName: result.fileName,
+      totalChunks: result.totalChunks,
+      message: `Đã cập nhật lên phiên bản ${nextVersion} thành công.`
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Lỗi cập nhật phiên bản: ${errorMsg}` }, 500);
+  }
+});
+
 
 // 4. Real-time Multi-Agent SSE Chat & Audit Streaming Handler
 app.post('/api/chat/stream', async (c) => {
@@ -286,15 +398,18 @@ app.post('/api/chat/stream', async (c) => {
   // Initialize Services & Repositories
   const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY, c.env.OPENAI_API_KEY);
   const d1Service = new D1DatabaseService(c.env.DB);
+  const d1Repo = new D1DocumentRepository(c.env.DB);
   const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
   const langfuse = new LangfuseLogger(c.env.LANGFUSE_PUBLIC_KEY, c.env.LANGFUSE_SECRET_KEY, c.env.LANGFUSE_HOST);
 
   // Initialize Multi-Agent instances
   const supervisor = new SupervisorAgent(llm);
-  const ragAgent = new AdvancedRAGAgent(llm, vectorRepo);
+  const ragAgent = new AdvancedRAGAgent(llm, vectorRepo, d1Repo);
   const sqlAgent = new SQLToolAgent(llm, d1Service);
   const auditor = new RiskAuditorAgent(llm);
   const answerAgent = new AnswerAgent(llm);
+
+
 
   return streamText(c, async (stream) => {
     // Helper to stream JSON SSE events
@@ -315,30 +430,55 @@ app.post('/api/chat/stream', async (c) => {
 
     await sendEvent('status', { phase: 'STARTED', traceId, sessionId });
 
-    try {
-      // Step 1: Supervisor Intent Routing
-      state = await supervisor.execute(state);
-      await sendEvent('thought', state.thoughtProcess[state.thoughtProcess.length - 1]);
+    // Helper to stream sanitized JSON SSE thought events (P1.25 Privacy Redaction)
+    const sendSanitizedThought = async (step?: any) => {
+      if (!step) return;
+      const sanitizedStep = {
+        agent: step.agent,
+        status: step.status,
+        thought: step.thought,
+        timestamp: step.timestamp
+      };
+      await sendEvent('thought', sanitizedStep);
+    };
 
-      const intent = state.intent || 'HYBRID_AUDIT';
+    try {
+      // Step 1: Supervisor Intent Routing (Bypass LLM supervisor if docId is explicitly selected)
+      if (docId) {
+        state.intent = 'RAG_ONLY';
+        state.thoughtProcess.push({
+          agent: 'SUPERVISOR',
+          status: 'DONE',
+          thought: `Đã chọn tập tin văn bản (${docId}). Tự động chuyển hướng tới RAG Retrieval Engine.`,
+          timestamp: Date.now()
+        });
+        await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
+      } else {
+        state = await supervisor.execute(state);
+        await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
+      }
+
+      const intent = state.intent || 'RAG_ONLY';
 
       // Step 2 & 3: Agent Execution based on Intent
       if (intent === 'RAG_ONLY' || intent === 'HYBRID_AUDIT') {
         state = await ragAgent.execute(state);
-        await sendEvent('thought', state.thoughtProcess[state.thoughtProcess.length - 1]);
+        await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
       }
 
       if (intent === 'SQL_ONLY' || intent === 'HYBRID_AUDIT') {
         state = await sqlAgent.execute(state);
-        await sendEvent('thought', state.thoughtProcess[state.thoughtProcess.length - 1]);
+        await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
       }
+
 
       // Step 4: Auditor & Zero-Hallucination Answer Synthesizer
       if (intent === 'HYBRID_AUDIT' || intent === 'RAG_ONLY' || intent === 'SQL_ONLY') {
         if (intent === 'HYBRID_AUDIT') {
           state = await auditor.execute(state);
-          await sendEvent('thought', state.thoughtProcess[state.thoughtProcess.length - 1]);
+          await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
         }
+
         
         const ragResult = (state as any).ragResult;
         state.finalAnswer = await answerAgent.generateAnswer(state, ragResult);

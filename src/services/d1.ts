@@ -22,18 +22,21 @@ export class D1DatabaseService {
   }
 
   /**
-   * Dynamically inspects D1 database schema from `sqlite_master` & `PRAGMA table_info`.
-   * Returns a complete, dynamic text representation of all tables and columns for LLM prompts.
+   * Dynamically inspects D1 database schema for business tables ONLY.
+   * Excludes sensitive system tables (chat_logs, document_chunks, ip_rate_limits, document_records, document_sections).
    */
   public async getDynamicSchemaPrompt(): Promise<{ textPrompt: string; schemas: TableSchema[] }> {
-    // Exclude system internal tables
+    const sensitiveTables = ['chat_logs', 'document_chunks', 'ip_rate_limits', 'document_records', 'document_sections'];
+    
     const masterQuery = `
       SELECT name FROM sqlite_master 
       WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'
     `;
     const { results } = await this.db.prepare(masterQuery).all<{ name: string }>();
 
-    if (!results || results.length === 0) {
+    const businessTables = (results || []).filter(r => !sensitiveTables.includes(r.name));
+
+    if (businessTables.length === 0) {
       return {
         textPrompt: 'No business tables currently exist in database.',
         schemas: []
@@ -43,7 +46,7 @@ export class D1DatabaseService {
     const schemas: TableSchema[] = [];
     const promptLines: string[] = ['DYNAMIC DATABASE SCHEMA INSPECTION RESULT:'];
 
-    for (const row of results) {
+    for (const row of businessTables) {
       const tableName = row.name;
       const pragmaQuery = `PRAGMA table_info("${tableName}")`;
       const colResults = await this.db.prepare(pragmaQuery).all<{
@@ -73,14 +76,25 @@ export class D1DatabaseService {
   }
 
   /**
-   * Executes a safe, read-only SELECT query against Cloudflare D1.
+   * Executes a safe, read-only SELECT query against Cloudflare D1 with table access control.
    */
   public async executeQuery<T = Record<string, unknown>>(rawSql: string): Promise<T[]> {
     const sanitizedSql = SQLSanitizer.validateReadOnlySelect(rawSql);
+    
+    // Enforce system table protection
+    const sensitiveTables = ['chat_logs', 'document_chunks', 'ip_rate_limits', 'document_records', 'document_sections'];
+    for (const table of sensitiveTables) {
+      const regex = new RegExp(`\\b${table}\\b`, 'i');
+      if (regex.test(sanitizedSql)) {
+        throw new Error(`SECURITY_ERROR: Truy vấn vào bảng hệ thống "${table}" bị từ chối.`);
+      }
+    }
+
     const statement = this.db.prepare(sanitizedSql);
     const { results } = await statement.all<T>();
     return results || [];
   }
+
 
   /**
    * Persists AI chat trace log into D1 Database `chat_logs` table.

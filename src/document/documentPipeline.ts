@@ -1,5 +1,5 @@
-// Generic Document Ingestion Pipeline Orchestrator
-// Coordinates Extraction -> Normalization -> Validation -> Hierarchy Chunking -> Persistence
+// Generic Document Ingestion Pipeline Orchestrator (Flow A & Flow D)
+// Coordinates Storage -> Parser -> Structure Analyzer -> Chunking -> BGE-M3 Embedding -> Vectorize Indexing
 
 import { DocumentExtractorFactory } from './extraction/documentExtractor';
 import { StructureParser } from './parsing/structureParser';
@@ -37,7 +37,7 @@ export class DocumentPipeline {
     r2: R2Bucket,
     ai: Ai
   ) {
-    this.extractorFactory = new DocumentExtractorFactory();
+    this.extractorFactory = new DocumentExtractorFactory(llm);
     this.structureParser = new StructureParser(llm);
     this.structureValidator = new StructureValidator();
     this.structureChunker = new StructureChunker();
@@ -47,61 +47,106 @@ export class DocumentPipeline {
   }
 
   /**
-   * Executes complete document ingestion pipeline
+   * Executes complete document ingestion pipeline according to Flow A:
+   * UPLOADED -> PARSING -> CHUNKING -> EMBEDDING -> INDEXING -> READY (or FAILED)
    */
-  public async processDocument(docId: string, fileName: string, buffer: ArrayBuffer): Promise<PipelineResult> {
-    try {
-      // 1. Upload raw binary file to R2 Bucket
-      const r2Key = await this.r2Repo.uploadDocument(docId, fileName, buffer);
+  public async processDocument(
+    docId: string, 
+    fileName: string, 
+    buffer: ArrayBuffer,
+    options?: { userId?: string; version?: string; parentDocId?: string }
+  ): Promise<PipelineResult> {
+    let retryCount = 0;
+    const maxRetries = 2;
 
-      // 2. Register initial document status in D1
-      await this.d1Repo.createInitialRecord(docId, fileName, r2Key);
-      await this.d1Repo.updateStatus(docId, 'PROCESSING');
+    // Step 1: Upload raw binary file to Cloudflare R2 & Register initial record in D1 (Idempotent once)
+    const r2Key = await this.r2Repo.uploadDocument(docId, fileName, buffer);
+    await this.d1Repo.createInitialRecord({
+      docId,
+      fileName,
+      r2Key,
+      userId: options?.userId,
+      version: options?.version || 'v1',
+      parentDocId: options?.parentDocId
+    });
 
-      // 3. Extract raw text & pages via DocumentExtractorFactory
-      const rawExtractedDoc = await this.extractorFactory.extract(buffer, fileName);
+    while (retryCount <= maxRetries) {
+      try {
+        // Step 2: Transition to PARSING status (Parser & OCR)
+        await this.d1Repo.updateStatus(docId, 'PARSING', { retryCount });
+        const rawExtractedDoc = await this.extractorFactory.extract(buffer, fileName);
+        const unvalidatedDoc = await this.structureParser.parse(rawExtractedDoc, docId, fileName);
+        const validation = this.structureValidator.validate(unvalidatedDoc);
+        
+        if (validation.status === 'REJECT') {
+          throw new Error(`Cấu trúc tài liệu bị từ chối do không nhất quán dữ liệu.`);
+        }
+        
+        const parsedDoc = validation.validatedDocument;
 
-      // 4. Normalize structure via LLM StructureParser (Fact-Preserving)
-      const unvalidatedDoc = await this.structureParser.parse(rawExtractedDoc, docId, fileName);
+        // Step 3: Transition to CHUNKING status (Structure Analyzer & Chunker)
+        await this.d1Repo.updateStatus(docId, 'CHUNKING', { totalPages: parsedDoc.metadata.pageCount, retryCount });
 
-      // 5. Validate fact consistency & structure integrity
-      const validation = this.structureValidator.validate(unvalidatedDoc);
-      const parsedDoc = validation.validatedDocument;
+        const chunks: RagChunk[] = this.structureChunker.chunk(parsedDoc);
 
-      // 6. Build hierarchy & clause-aware RAG chunks
-      const chunks: RagChunk[] = this.structureChunker.chunk(parsedDoc);
+        // Step 4: Transition to EMBEDDING status (BGE-M3 Embedding Model)
+        await this.d1Repo.updateStatus(docId, 'EMBEDDING', { 
+          totalPages: parsedDoc.metadata.pageCount, 
+          totalChunks: chunks.length, 
+          retryCount 
+        });
+        await this.d1Repo.saveSections(docId, parsedDoc.sections);
+        await this.d1Repo.saveChunks(docId, chunks);
 
-      // 7. Persist sections & chunks to D1 Database
-      await this.d1Repo.saveSections(docId, parsedDoc.sections);
-      await this.d1Repo.saveChunks(docId, chunks);
+        // Step 5: Transition to INDEXING status (Vectorize Indexing)
+        await this.d1Repo.updateStatus(docId, 'INDEXING', { 
+          totalPages: parsedDoc.metadata.pageCount, 
+          totalChunks: chunks.length, 
+          retryCount 
+        });
+        await this.vectorRepo.upsertChunks(chunks);
 
-      // 8. Index structure-aware vectors to Cloudflare Vectorize
-      await this.vectorRepo.upsertChunks(chunks);
+        // If updating to a new version, deactivate older versions
+        if (options?.parentDocId) {
+          await this.d1Repo.deactivateOlderVersions(options.parentDocId);
+        }
 
-      // 9. Update final document status to READY
-      await this.d1Repo.updateStatus(docId, 'READY', {
-        totalPages: parsedDoc.metadata.pageCount,
-        totalChunks: chunks.length,
-        extractionMethod: rawExtractedDoc.extractionMethod
-      });
+        // Step 6: Transition to READY status
+        await this.d1Repo.updateStatus(docId, 'READY', {
+          totalPages: parsedDoc.metadata.pageCount,
+          totalChunks: chunks.length,
+          extractionMethod: rawExtractedDoc.extractionMethod,
+          retryCount
+        });
 
-      return {
-        success: true,
-        docId,
-        fileName,
-        totalChunks: chunks.length,
-        parsedDocument: parsedDoc,
-        warnings: parsedDoc.warnings || [],
-        message: 'Tài liệu đã được phân tích cấu trúc và lưu trữ thành công vào kho Vector.'
-      };
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      await this.d1Repo.updateStatus(docId, 'FAILED', {
-        errorCode: 'INGESTION_ERROR',
-        errorMessage: errorMsg
-      });
+        return {
+          success: true,
+          docId,
+          fileName,
+          totalChunks: chunks.length,
+          parsedDocument: parsedDoc,
+          warnings: parsedDoc.warnings || [],
+          message: 'Tài liệu đã được phân tích cấu trúc, tạo Vector bge-m3 và sẵn sàng tra cứu.'
+        };
+      } catch (err) {
+        retryCount++;
+        const errorMsg = err instanceof Error ? err.message : String(err);
 
-      throw new Error(`Lỗi xử lý tài liệu (${fileName}): ${errorMsg}`);
+        if (retryCount > maxRetries) {
+          await this.d1Repo.updateStatus(docId, 'FAILED', {
+            errorCode: 'PIPELINE_ERROR',
+            errorMessage: errorMsg,
+            retryCount
+          });
+          throw new Error(`Xử lý tài liệu thất bại sau ${maxRetries} lần thử: ${errorMsg}`);
+        }
+
+        // Short retry backoff delay
+        await new Promise(resolve => setTimeout(resolve, 500 * retryCount));
+      }
     }
+
+    throw new Error('Pipeline execution failed unexpectedly.');
   }
 }
+

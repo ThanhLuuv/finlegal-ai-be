@@ -12,60 +12,48 @@ export class VectorRepository {
   }
 
   /**
-   * Generates single text embedding
+   * Generates single text embedding using BGE-M3 model ONLY (Flow A §8 & Flow B §12)
    */
   public async generateEmbedding(text: string): Promise<number[]> {
-    const models = [
-      '@cf/baai/bge-base-en-v1.5',
-      '@cf/google/embeddinggemma-300m',
-      '@cf/baai/bge-m3'
-    ];
-
-    for (const modelName of models) {
+    const modelName = '@cf/baai/bge-m3';
+    let attempts = 0;
+    while (attempts < 3) {
       try {
         const res = await (this.ai as any).run(modelName, { text: [text] });
         if (res && res.data && res.data[0]) {
           return res.data[0];
         }
-      } catch {
-        // try next model
+      } catch (err) {
+        attempts++;
+        if (attempts >= 3) {
+          throw new Error(`EMBEDDING_FAILED: Failed to generate vector using ${modelName} after 3 attempts: ${String(err)}`);
+        }
+        await new Promise(r => setTimeout(r, 400 * attempts));
       }
     }
-
-    return new Array(768).fill(0);
+    throw new Error(`EMBEDDING_FAILED: ${modelName} returned empty embedding.`);
   }
 
   /**
-   * Generates batch embeddings in parallel using Promise.all()
+   * Generates batch embeddings in parallel using BGE-M3 model ONLY
    */
   public async generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
-    const batchSize = 25;
+    const batchSize = 20;
     const batches: string[][] = [];
 
     for (let i = 0; i < texts.length; i += batchSize) {
       batches.push(texts.slice(i, i + batchSize));
     }
 
-    const models = [
-      '@cf/baai/bge-base-en-v1.5',
-      '@cf/google/embeddinggemma-300m',
-      '@cf/baai/bge-m3'
-    ];
-
+    const modelName = '@cf/baai/bge-m3';
     const batchResults = await Promise.all(
       batches.map(async (batchTexts) => {
-        for (const modelName of models) {
-          try {
-            const res = await (this.ai as any).run(modelName, { text: batchTexts });
-            if (res && res.data && Array.isArray(res.data)) {
-              return res.data;
-            }
-          } catch {
-            // try next model
-          }
+        const res = await (this.ai as any).run(modelName, { text: batchTexts });
+        if (res && res.data && Array.isArray(res.data)) {
+          return res.data;
         }
-        return batchTexts.map(() => new Array(768).fill(0));
+        throw new Error(`EMBEDDING_FAILED: Batch embedding failed for ${modelName}`);
       })
     );
 
@@ -82,7 +70,7 @@ export class VectorRepository {
 
     const vectors: VectorizeVector[] = chunks.map((chunk, idx) => ({
       id: chunk.id,
-      values: embeddings[idx] || new Array(768).fill(0),
+      values: embeddings[idx],
       metadata: {
         docId: chunk.documentId,
         fileName: chunk.metadata.fileName,
@@ -92,7 +80,7 @@ export class VectorRepository {
         sectionPath: chunk.metadata.sectionPath ? JSON.stringify(chunk.metadata.sectionPath) : '[]',
         chunkIndex: chunk.metadata.chunkIndex,
         chunkType: chunk.chunkType,
-        text: chunk.content.slice(0, 1000), // Preserves full text in metadata capped safely
+        text: chunk.content.slice(0, 1000), // Preserves text in metadata safely
         containsTable: chunk.metadata.containsTable
       }
     }));
@@ -107,11 +95,23 @@ export class VectorRepository {
   }
 
   /**
-   * Queries Vectorize with optional metadata filtering (docId)
+   * Deletes document vectors from Vectorize index by exact IDs (Flow C §20)
+   */
+  public async deleteByIds(vectorIds: string[]): Promise<void> {
+    if (!vectorIds || vectorIds.length === 0) return;
+    const batchSize = 100;
+    for (let i = 0; i < vectorIds.length; i += batchSize) {
+      const batch = vectorIds.slice(i, i + batchSize);
+      await this.vectorize.deleteByIds(batch);
+    }
+  }
+
+  /**
+   * Queries Vectorize with mandatory metadata filtering when targetDocId is specified
    */
   public async queryVectorMatches(
     queryText: string,
-    topK = 8,
+    topK = 20,
     selectedDocId?: string
   ): Promise<Array<{
     chunkId: string;
@@ -121,20 +121,14 @@ export class VectorRepository {
   }>> {
     const queryVector = await this.generateEmbedding(queryText);
 
-    let matches = await this.vectorize.query(queryVector, {
+    const matches = await this.vectorize.query(queryVector, {
       topK,
       filter: selectedDocId ? { docId: selectedDocId } : undefined,
       returnMetadata: 'all'
     });
 
-    if ((!matches || !matches.matches || matches.matches.length === 0) && selectedDocId) {
-      matches = await this.vectorize.query(queryVector, {
-        topK,
-        returnMetadata: 'all'
-      });
-    }
-
     if (!matches || !matches.matches) return [];
+
 
     return matches.matches.map(m => {
       const rawPath = String(m.metadata?.sectionPath || '[]');
@@ -165,3 +159,4 @@ export class VectorRepository {
     });
   }
 }
+

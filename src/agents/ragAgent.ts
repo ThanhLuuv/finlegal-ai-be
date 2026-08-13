@@ -6,14 +6,18 @@ import { LLMProviderService } from '../services/llm';
 import { RagService } from '../rag/ragService';
 import { VectorRepository } from '../storage/vectorRepository';
 
+import { D1DocumentRepository } from '../storage/d1DocumentRepository';
+
 export class AdvancedRAGAgent extends BaseAgent {
   public role: AgentRole = 'RAG_AGENT';
   private ragService: RagService;
 
-  constructor(llm: LLMProviderService, vectorRepo: VectorRepository) {
+  constructor(llm: LLMProviderService, vectorRepo: VectorRepository, d1Repo?: D1DocumentRepository) {
     super(llm);
-    this.ragService = new RagService(vectorRepo);
+    this.ragService = new RagService(vectorRepo, llm, d1Repo);
   }
+
+
 
   public async execute(state: MultiAgentState): Promise<MultiAgentState> {
     this.recordThought(state, 'Executing Vector Retrieval & Lexical Reranking with Metadata Filtering...');

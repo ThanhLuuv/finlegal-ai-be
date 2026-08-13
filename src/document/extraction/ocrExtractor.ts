@@ -3,13 +3,9 @@
 import { RawExtractedDocument } from './pdfExtractor';
 
 export class OcrDocumentExtractor {
-  public async extractScanned(buffer: ArrayBuffer, fileName: string): Promise<RawExtractedDocument> {
-    // OCR Interface stub: Falls back gracefully if PDF contains image scans only
-    return {
-      text: `[Tài liệu Scan: ${fileName} - Cần OCR xử lý]`,
-      pages: [{ pageNumber: 1, content: `[Scanned Document Page 1]` }],
-      pageCount: 1,
-      extractionMethod: 'ocr_fallback'
-    };
+  public async extractScanned(_buffer: ArrayBuffer, fileName: string): Promise<RawExtractedDocument> {
+    // Stop ingestion and throw explicit error when scanned PDF cannot be parsed via OCR
+    throw new Error(`OCR_FAILED: File "${fileName}" là tập tin PDF dạng ảnh scan không chứa văn bản. Vui lòng chuyển đổi OCR trước khi tải lên.`);
   }
 }
+

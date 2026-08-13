@@ -1,4 +1,4 @@
-// Unified LLM Provider Service (Gemini 2.0 Flash / 1.5 Flash + Workers AI 2026 Multilingual Fallback)
+// Unified LLM Provider Service (AgentRouter gpt-5.6-sol / claude-opus-4-6 + Cloudflare Workers AI Fallback)
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
@@ -9,6 +9,7 @@ export interface LLMOptions {
   temperature?: number;
   max_tokens?: number;
   jsonMode?: boolean;
+  task?: 'QUERY_REWRITE' | 'MAIN_ANSWER' | 'STRUCTURE_PARSING';
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -22,66 +23,60 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 
 export class LLMProviderService {
   private ai: Ai;
-  private geminiApiKey?: string;
   private openaiApiKey?: string;
 
-  constructor(ai: Ai, geminiApiKey?: string, openaiApiKey?: string) {
+  constructor(ai: Ai, _geminiApiKey?: string, openaiApiKey?: string) {
     this.ai = ai;
-    this.geminiApiKey = geminiApiKey;
     this.openaiApiKey = openaiApiKey;
   }
 
   /**
-   * Directly extracts and structures PDF documents using Gemini 2.0 Multimodal Vision AI.
-   * Handles complex fonts, Canva exports, tables, and Vietnamese text natively without hardcoded rules.
+   * Directly extracts and structures PDF documents using Multimodal Vision AI.
    */
   public async processMultimodalDocument(pdfBuffer: ArrayBuffer, fileName: string): Promise<string | null> {
-    if (!this.geminiApiKey) return null;
+    if (!this.openaiApiKey || pdfBuffer.byteLength > 10 * 1024 * 1024) return null;
 
-    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
     const base64Data = arrayBufferToBase64(pdfBuffer);
+    const endpoints = [
+      'https://agentrouter.org/v1/chat/completions',
+      'https://api.openai.com/v1/chat/completions'
+    ];
+    const models = ['gpt-5.6-sol', 'gpt-5.5', 'gpt-4o'];
 
-    for (const modelName of models) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${this.geminiApiKey}`;
-        const body = {
-          contents: [
-            {
-              role: 'user',
-              parts: [
+    for (const endpoint of endpoints) {
+      for (const modelName of models) {
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${this.openaiApiKey}`
+            },
+            body: JSON.stringify({
+              model: modelName,
+              messages: [
                 {
-                  inlineData: {
-                    mimeType: 'application/pdf',
-                    data: base64Data
-                  }
+                  role: 'system',
+                  content: 'You are FinLegal AI Document Extractor. Extract ALL text, candidate names, skills, clauses, experience, and tables accurately into clean Markdown format. Return ONLY the extracted Markdown text.'
                 },
                 {
-                  text: `You are an expert AI Document Intelligence Engine for FinLegal AI.
-Examine this PDF file "${fileName}".
-Extract ALL text, candidate names, job titles, phone numbers, addresses, experience dates, skills, contract clauses, and tables.
-Convert everything into clean, beautifully structured Vietnamese/English Markdown format.
-Preserve 100% of facts, dates, names, and numbers accurately.`
+                  role: 'user',
+                  content: `FILENAME: ${fileName}\n\nPDF BASE64 DATA:\n${base64Data}`
                 }
               ]
+            })
+          });
+
+          if (res.ok) {
+            const data = await res.json() as any;
+            const text = data.choices?.[0]?.message?.content;
+            if (text && text.trim().length > 20) {
+              return text.trim();
             }
-          ]
-        };
-
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-
-        if (res.ok) {
-          const data = await res.json() as any;
-          const extractedText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (extractedText && extractedText.trim().length > 20) {
-            return extractedText.trim();
           }
+        } catch (err) {
+          console.warn(`Multimodal AI model ${modelName} notice:`, err);
         }
-      } catch (err) {
-        console.warn(`Gemini Multimodal AI model ${modelName} notice:`, err);
       }
     }
 
@@ -89,39 +84,36 @@ Preserve 100% of facts, dates, names, and numbers accurately.`
   }
 
   /**
-   * Generates completion from LLM with automatic JSON parsing support.
+   * Generates completion with Task-Based Model Routing Strategy.
    */
   public async generateText(messages: LLMMessage[], options: LLMOptions = {}): Promise<string> {
     const temperature = options.temperature ?? 0.1;
     const maxTokens = options.max_tokens ?? 2048;
+    const task = options.task || 'MAIN_ANSWER';
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
 
-    // Option A: If OpenAI API Key is provided, use GPT-4o / OpenAI GPT models
-    if (this.openaiApiKey) {
-      try {
-        return await this.callOpenAIAPI(messages, temperature);
-      } catch (openaiErr) {
-        console.warn('OpenAI API call failed, trying Gemini API:', openaiErr);
-      }
+    // Task-specific model priority list
+    let models: string[] = [];
+
+    if (task === 'QUERY_REWRITE') {
+      models = [
+        '@cf/meta/llama-3.1-8b-instruct',
+        '@cf/qwen/qwen1.5-14b-chat-awq'
+      ];
+    } else if (task === 'MAIN_ANSWER') {
+      models = [
+        '@cf/qwen/qwen3-30b-a3b-fp8',
+        '@cf/meta/llama-3.3-70b-instruct',
+        '@cf/meta/llama-3.1-8b-instruct'
+      ];
+    } else {
+      models = [
+        '@cf/qwen/qwen3-30b-a3b-fp8',
+        '@cf/meta/llama-3.1-8b-instruct'
+      ];
     }
 
-    // Option B: If Gemini API key is provided, use Gemini 2.5 Flash / 2.0 Flash
-    if (this.geminiApiKey) {
-      try {
-        return await this.callGeminiAPI(messages, temperature);
-      } catch (geminiErr) {
-        console.warn('Gemini API call failed, falling back to Workers AI models:', geminiErr);
-      }
-    }
-
-    // Option C: Official Cloudflare Workers AI text generation models list
-    const models = [
-      '@cf/meta/llama-3.3-70b-instruct',
-      '@cf/meta/llama-3.1-8b-instruct',
-      '@cf/qwen/qwen1.5-14b-chat-awq',
-      '@cf/mistral/mistral-7b-instruct-v0.1'
-    ];
-
+    // 1. Try Cloudflare Workers AI Edge models first
     for (const modelName of models) {
       try {
         const response = await (this.ai as any).run(modelName, {
@@ -134,11 +126,20 @@ Preserve 100% of facts, dates, names, and numbers accurately.`
           return response.response;
         }
       } catch (err) {
-        console.warn(`Workers AI model ${modelName} failed, trying next fallback...`, err);
+        console.warn(`Workers AI model ${modelName} notice:`, err);
       }
     }
 
-    throw new Error('LLM Generation Failure: All OpenAI, Gemini API, and Workers AI fallbacks were unavailable.');
+    // 2. Fallback to AgentRouter / External API if configured
+    if (this.openaiApiKey) {
+      try {
+        return await this.callOpenAIAPI(messages, temperature);
+      } catch (openaiErr) {
+        console.warn('AgentRouter API call notice:', openaiErr);
+      }
+    }
+
+    throw new Error('LLM Generation Failure: All Workers AI models and API fallbacks were unavailable.');
   }
 
 
@@ -190,49 +191,6 @@ Preserve 100% of facts, dates, names, and numbers accurately.`
     }
   }
 
-  private async callGeminiAPI(messages: LLMMessage[], temperature: number): Promise<string> {
-    const contents = messages
-      .filter(m => m.role !== 'system')
-      .map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-      }));
-
-    const systemInstruction = messages.find(m => m.role === 'system')?.content;
-    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-
-
-    for (const modelName of models) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${this.geminiApiKey}`;
-        
-        const body: Record<string, unknown> = {
-          contents,
-          generationConfig: { temperature }
-        };
-
-        if (systemInstruction) {
-          body.systemInstruction = { parts: [{ text: systemInstruction }] };
-        }
-
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-
-        if (res.ok) {
-          const data = await res.json() as any;
-          return data.candidates[0].content.parts[0].text;
-        }
-      } catch {
-        // try next model
-      }
-    }
-
-    throw new Error('Gemini API call failed for all configured Gemini models.');
-  }
-
   private async callOpenAIAPI(messages: LLMMessage[], temperature: number): Promise<string> {
     const endpoints = [
       'https://agentrouter.org/v1/chat/completions',
@@ -271,7 +229,3 @@ Preserve 100% of facts, dates, names, and numbers accurately.`
     throw new Error('OpenAI/AgentRouter API call failed for all configured endpoints & models.');
   }
 }
-
-
-
-

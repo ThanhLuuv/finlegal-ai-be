@@ -3,7 +3,10 @@
 
 import { ParsedDocument, DocumentBlock, DocumentSection } from '../types';
 
+export type StructureValidationStatus = 'PASS' | 'WARNING' | 'REJECT';
+
 export interface ValidationResult {
+  status: StructureValidationStatus;
   isValid: boolean;
   warnings: string[];
   validatedDocument: ParsedDocument;
@@ -16,6 +19,7 @@ export class StructureValidator {
   public validate(document: ParsedDocument): ValidationResult {
     const warnings: string[] = [];
     const rawLower = (document.rawText || '').toLowerCase();
+    let status: StructureValidationStatus = 'PASS';
 
     // 1. Verify blocks are grounded in raw text (Check entity & date integrity)
     const validBlocks: DocumentBlock[] = [];
@@ -31,9 +35,11 @@ export class StructureValidator {
         }
       }
 
-      // If more than 50% of numbers in a block are absent from raw text, flag as possible LLM hallucination
+      // If more than 50% of numbers in a block are absent from raw text, flag as possible LLM hallucination & drop block
       if (numbersInBlock.length > 3 && missingNumbers > numbersInBlock.length / 2) {
-        warnings.push(`Cảnh báo: Phát hiện khối text "${block.content.slice(0, 40)}..." có thể chứa số liệu không có trong file gốc.`);
+        status = 'WARNING';
+        warnings.push(`Phát hiện và loại bỏ khối text "${block.content.slice(0, 40)}..." do chứa số liệu tự sinh không thuộc file gốc.`);
+        continue; // Reject ungrounded block
       }
 
       validBlocks.push(block);
@@ -46,6 +52,7 @@ export class StructureValidator {
       const pageEnd = sec.pageEnd || pageStart;
 
       if (pageEnd < pageStart) {
+        if (status === 'PASS') status = 'WARNING';
         warnings.push(`Cảnh báo: Mục "${sec.title}" có khoảng trang không hợp lệ (${pageStart} - ${pageEnd}). Đã tự động điều chỉnh.`);
       }
 
@@ -63,13 +70,21 @@ export class StructureValidator {
         const headerCount = table.headers ? table.headers.length : 0;
         const inconsistentRows = table.rows.filter(r => r.length !== headerCount);
         if (inconsistentRows.length > 0 && headerCount > 0) {
+          if (status === 'PASS') status = 'WARNING';
           warnings.push(`Cảnh báo: Bảng ở trang ${table.page} có ${inconsistentRows.length} dòng không khớp số lượng cột.`);
         }
       }
     }
 
+    // Critical failure check
+    const isValid = validSections.length > 0 || validBlocks.length > 0;
+    if (!isValid) {
+      status = 'REJECT';
+    }
+
     return {
-      isValid: true,
+      status,
+      isValid,
       warnings,
       validatedDocument: {
         ...document,
@@ -80,3 +95,4 @@ export class StructureValidator {
     };
   }
 }
+

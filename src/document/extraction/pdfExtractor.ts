@@ -19,17 +19,56 @@ export class StandardPdfExtractor {
     const rawText = await extractLegacyPdfText(buffer);
     const cleaned = cleanPrintableText(stripPDFSyntaxNoise(rawText));
 
-    // Approximate multi-page splitting based on page markers or length
-    const pageLength = 3000;
     const pages: ExtractedPage[] = [];
-    if (cleaned.length === 0) {
+
+    if (!cleaned || cleaned.trim().length === 0) {
       pages.push({ pageNumber: 1, content: '' });
-    } else {
+      return {
+        text: '',
+        pages,
+        pageCount: 1,
+        extractionMethod: 'pdf_flatedecode_stream'
+      };
+    }
+
+    // Preserve physical page breaks if FormFeed \f markers exist
+    if (rawText.includes('\f')) {
+      const rawPages = rawText.split('\f');
       let pageNum = 1;
-      for (let i = 0; i < cleaned.length; i += pageLength) {
+      for (const pText of rawPages) {
+        const cleanP = cleanPrintableText(stripPDFSyntaxNoise(pText));
+        if (cleanP.length > 0) {
+          pages.push({
+            pageNumber: pageNum++,
+            content: cleanP
+          });
+        }
+      }
+    }
+
+    // Fallback: If no \f formfeed markers were found, split by page markers or paragraph blocks
+    if (pages.length === 0) {
+      const paragraphBlocks = cleaned.split(/\n{2,}/);
+      let currentPageText = '';
+      let pageNum = 1;
+      const TARGET_PAGE_CHARS = 2200;
+
+      for (const block of paragraphBlocks) {
+        if (currentPageText.length + block.length > TARGET_PAGE_CHARS && currentPageText.length > 0) {
+          pages.push({
+            pageNumber: pageNum++,
+            content: currentPageText.trim()
+          });
+          currentPageText = block + '\n\n';
+        } else {
+          currentPageText += block + '\n\n';
+        }
+      }
+
+      if (currentPageText.trim().length > 0) {
         pages.push({
-          pageNumber: pageNum++,
-          content: cleaned.substring(i, i + pageLength)
+          pageNumber: pageNum,
+          content: currentPageText.trim()
         });
       }
     }
@@ -42,3 +81,4 @@ export class StandardPdfExtractor {
     };
   }
 }
+

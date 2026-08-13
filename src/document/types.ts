@@ -1,6 +1,14 @@
 // Generic Production Document Model Types & Interfaces
 
-export type ProcessingStatus = 'UPLOADED' | 'PROCESSING' | 'READY' | 'FAILED';
+export type ProcessingStatus = 
+  | 'UPLOADED' 
+  | 'PARSING' 
+  | 'CHUNKING' 
+  | 'EMBEDDING' 
+  | 'INDEXING' 
+  | 'READY' 
+  | 'FAILED'
+  | 'PROCESSING';
 
 export type BlockType = 'heading' | 'paragraph' | 'table' | 'list' | 'clause' | 'section' | 'other';
 

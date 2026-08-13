@@ -81,11 +81,22 @@ export function isPDFSyntaxChunk(text: string): boolean {
   return matchCount >= 2 || upper.includes('CIDFONTTYPE2') || upper.includes('OUTPUTINTENT');
 }
 
+export function isCMapFontGarbage(text: string): boolean {
+  if (!text || text.trim().length === 0) return true;
+
+  
+  // Count Latin1 extended font table noise characters (e.g. È, Ù, ò, Æ, œ, å, Œ, Ë, ì, ú, Þ, ×, ž, ï, þ, ø, ÿ, Õ, Ô, Ò)
+  const fontGarbageSymbols = text.match(/[\u0080-\u00BF\u00C0-\u00C5\u00C7-\u00CB\u00D0-\u00D4\u00D7-\u00DD\u00DF-\u00E5\u00E7-\u00EB\u00F0-\u00F4\u00F7-\u00FD]/g) || [];
+  const ratio = fontGarbageSymbols.length / text.length;
+  return ratio > 0.03;
+}
+
 export function isBinaryNoise(text: string): boolean {
   if (!text || text.trim().length < 4) return true;
+  if (isCMapFontGarbage(text)) return true;
   const validChars = text.match(/[A-Za-z0-9À-ỹ\s\.,:\-\(\)\/\$]/g) || [];
   const validRatio = validChars.length / text.length;
-  return validRatio < 0.35;
+  return validRatio < 0.45;
 }
 
 async function decompressFlate(data: Uint8Array): Promise<Uint8Array | null> {
@@ -146,11 +157,25 @@ export async function extractLegacyPdfText(buffer: ArrayBuffer): Promise<string>
           decompressedStr = latin1Decoder.decode(decompressed);
         }
 
+        // 1. Extract Parentheses Strings: (text) Tj or (text) TJ
         const strInside = decompressedStr.match(/\(([^)]+)\)/g);
         if (strInside) {
           const joined = strInside.map(s => s.slice(1, -1)).join(' ');
           const cleaned = cleanPrintableText(joined);
-          if (cleaned.length > 0) decompressedTextBlocks.push(cleaned);
+          if (cleaned.length > 0 && !isCMapFontGarbage(cleaned)) {
+            decompressedTextBlocks.push(cleaned);
+          }
+        }
+
+        // 2. Extract Hex Strings: <362F3230...> Tj or TJ
+        const hexInside = decompressedStr.match(/<([0-9A-Fa-f]{4,})>/g);
+        if (hexInside) {
+          const decodedHexes = hexInside
+            .map(h => decodeHexPDFString(h.slice(1, -1)))
+            .filter(d => d && d.trim().length > 0 && !isCMapFontGarbage(d));
+          if (decodedHexes.length > 0) {
+            decompressedTextBlocks.push(decodedHexes.join(' '));
+          }
         }
       }
     }
@@ -160,21 +185,12 @@ export async function extractLegacyPdfText(buffer: ArrayBuffer): Promise<string>
 
   if (decompressedTextBlocks.length > 0) {
     const fullText = stripPDFSyntaxNoise(decompressedTextBlocks.join('\n\n'));
-    if (fullText.length > 10 && !isBinaryNoise(fullText)) {
+    if (fullText.length > 10 && !isBinaryNoise(fullText) && !isCMapFontGarbage(fullText)) {
       return fullText;
     }
   }
 
-  const cleanedFullStr = stripPDFSyntaxNoise(fullLatin1Str);
-  const pdfKeywords = new Set([
-    'TYPE', 'OUTPUTINTENT', 'GTS_PDFA1', 'STRUCTELEM', 'ENDOBJ', 'OBJ', 'STREAM', 'ENDSTREAM',
-    'CIDFONTTYPE', 'CIDFONTTYPE2', 'CIDTOGIDMAP', 'CIDSYSTEMINFO', 'IDENTITY', 'SUBTYPE',
-    'FONTDESCRIPTOR', 'FONTFILE', 'FONTFILE2', 'FONTFILE3', 'PROCSET', 'MEDIABOX', 'CROPBOX',
-    'RESOURCES', 'PARENT', 'KIDS', 'ROOT', 'INFO', 'TRANSPARENCY', 'COUNT', 'LAST', 'GROUP'
-  ]);
-
-  const wordTokens = (cleanedFullStr.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [])
-    .filter(token => !pdfKeywords.has(token.toUpperCase()));
-
-  return wordTokens.join(' ');
+  // NOTE: If decompressed streams yield no valid text or only CMap font garbage,
+  // return empty string so the system automatically triggers Multimodal AI extraction!
+  return '';
 }

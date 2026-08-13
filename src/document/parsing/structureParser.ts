@@ -14,16 +14,18 @@ export class StructureParser {
 
   /**
    * Parses raw extracted document into structured ParsedDocument
+   * Preserves 100% verbatim text across ALL pages without text truncation or LLM content duplication bugs.
    */
   public async parse(rawDoc: RawExtractedDocument, docId: string, fileName: string): Promise<ParsedDocument> {
     const rawText = rawDoc.text || '';
     const warnings: string[] = [];
+    const pages = rawDoc.pages || [];
 
     if (!rawText || rawText.trim().length === 0) {
       return {
         documentId: docId,
         title: fileName,
-        pages: rawDoc.pages || [],
+        pages: pages,
         sections: [],
         blocks: [],
         tables: [],
@@ -32,7 +34,7 @@ export class StructureParser {
           mimeType: 'application/pdf',
           pageCount: rawDoc.pageCount || 1,
           documentType: 'generic',
-          processingVersion: 'v2.0',
+          processingVersion: 'v3.0',
           extractionMethod: rawDoc.extractionMethod
         },
         rawText: '',
@@ -40,106 +42,120 @@ export class StructureParser {
       };
     }
 
-    const sample = rawText.slice(0, 10000);
+    const parsedSections: DocumentSection[] = [];
+    const parsedBlocks: DocumentBlock[] = [];
 
-    let parsedBlocks: DocumentBlock[] = [];
-    let parsedSections: DocumentSection[] = [];
-    let parsedTables: DocumentTable[] = [];
-
-    try {
-      const jsonResponse = await this.llm.generateJSON<{
-        documentType?: string;
-        title?: string;
-        sections?: Array<{
-          title: string;
-          level?: number;
-          type?: string;
-          content: string;
-          subsections?: string[];
-        }>;
-        tables?: Array<{
-          page?: number;
-          headers: string[];
-          rows: string[][];
-        }>;
-      }>([
-        {
-          role: 'system',
-          content: `You are an expert Document Structure Normalizer for FinLegal AI.
-Examine this extracted raw document text.
-Identify:
-1. Document Type (e.g., 'contract', 'financial_report', 'resume', 'sop', 'invoice', 'manual').
-2. Document Title.
-3. Sections / Headings / Clauses (e.g. 'Điều 1', 'Executive Summary', 'Experience').
-4. Tables (headers and rows).
-
-CRITICAL REQUIREMENT: Do NOT modify, rewrite, or hallucinate any numbers, names, or facts. Return valid JSON only.`
-        },
-        {
-          role: 'user',
-          content: `FILE NAME: ${fileName}\n\nRAW EXTRACTED TEXT:\n${sample}`
-        }
-      ]);
-
-      if (jsonResponse.sections && Array.isArray(jsonResponse.sections)) {
-        parsedSections = jsonResponse.sections.map((sec, idx) => ({
-          id: `sec_${docId}_${idx + 1}`,
-          title: sec.title || `Mục ${idx + 1}`,
-          sectionPath: [sec.title || `Mục ${idx + 1}`],
-          pageStart: 1,
-          pageEnd: rawDoc.pageCount || 1,
-          content: sec.content || '',
-          level: sec.level || 1
-        }));
+    // Step 1: Flatten Pages into a Global Block Stream (P1.6 Cross-Page Continuity)
+    const globalBlocks: Array<{ blockId: string; pageNumber: number; content: string }> = [];
+    for (const p of pages) {
+      const paragraphs = p.content.split(/\n\s*\n/).filter(str => str.trim().length > 0);
+      for (const para of paragraphs) {
+        const blkId = `blk_${docId}_${globalBlocks.length + 1}`;
+        globalBlocks.push({
+          blockId: blkId,
+          pageNumber: p.pageNumber,
+          content: para.trim()
+        });
+        parsedBlocks.push({
+          id: blkId,
+          type: 'paragraph',
+          content: para.trim(),
+          page: p.pageNumber
+        });
       }
-
-      if (jsonResponse.tables && Array.isArray(jsonResponse.tables)) {
-        parsedTables = jsonResponse.tables.map((tbl, idx) => ({
-          id: `tbl_${docId}_${idx + 1}`,
-          page: tbl.page || 1,
-          headers: tbl.headers || [],
-          rows: tbl.rows || [],
-          markdown: `| ${tbl.headers.join(' | ')} |\n| ${tbl.headers.map(() => '---').join(' | ')} |\n` +
-            tbl.rows.map(r => `| ${r.join(' | ')} |`).join('\n')
-        }));
-      }
-    } catch (err) {
-      warnings.push(`Chương trình phân tích cấu trúc AI vừa chuyển sang chế độ dự phòng tự động.`);
     }
 
-    // Fallback block building if sections/blocks are empty
-    if (parsedSections.length === 0) {
-      const paragraphs = rawText.split(/\n\s*\n/).filter(p => p.trim().length > 0);
-      parsedBlocks = paragraphs.map((p, idx) => ({
-        id: `blk_${docId}_${idx + 1}`,
-        type: 'paragraph',
-        content: p.trim(),
-        page: Math.floor(idx / 5) + 1
-      }));
+    // Step 2: Detect Section Headings across the Global Block Stream
+    const headingRegex = /^(Điều\s+\d+|Chương\s+[IVXLCDM\d]+|Mục\s+\d+|Khoản\s+\d+\.\d+|Section\s+\d+|Part\s+\d+|[A-Z\d\.\s]{3,40}:)/i;
+    const sectionGroups: Array<{
+      title: string;
+      startBlockIdx: number;
+      endBlockIdx: number;
+      pageStart: number;
+      pageEnd: number;
+      blocks: Array<{ pageNumber: number; content: string }>;
+    }> = [];
 
-      parsedSections.push({
-        id: `sec_${docId}_main`,
-        title: fileName,
-        sectionPath: [fileName],
-        pageStart: 1,
-        pageEnd: rawDoc.pageCount || 1,
-        content: rawText
-      });
+    let currentSection: {
+      title: string;
+      startBlockIdx: number;
+      endBlockIdx: number;
+      pageStart: number;
+      pageEnd: number;
+      blocks: Array<{ pageNumber: number; content: string }>;
+    } | null = null;
+
+    for (let i = 0; i < globalBlocks.length; i++) {
+      const blk = globalBlocks[i];
+      const match = blk.content.match(headingRegex);
+
+      if (match) {
+        if (currentSection) {
+          currentSection.endBlockIdx = i - 1;
+          sectionGroups.push(currentSection);
+        }
+        currentSection = {
+          title: match[1].trim(),
+          startBlockIdx: i,
+          endBlockIdx: i,
+          pageStart: blk.pageNumber,
+          pageEnd: blk.pageNumber,
+          blocks: [blk]
+        };
+      } else if (currentSection) {
+        currentSection.endBlockIdx = i;
+        currentSection.pageEnd = blk.pageNumber;
+        currentSection.blocks.push(blk);
+      }
+    }
+
+    if (currentSection) {
+      sectionGroups.push(currentSection);
+    }
+
+    // Step 3: Build Verbatim Sections spanning across page boundaries
+    if (sectionGroups.length > 0) {
+      for (let sIdx = 0; sIdx < sectionGroups.length; sIdx++) {
+        const sec = sectionGroups[sIdx];
+        const verbatimContent = sec.blocks.map(b => b.content).join('\n\n');
+
+        parsedSections.push({
+          id: `sec_${docId}_${sIdx + 1}`,
+          title: sec.title,
+          sectionPath: [sec.title],
+          pageStart: sec.pageStart,
+          pageEnd: sec.pageEnd,
+          content: verbatimContent,
+          level: 1
+        });
+      }
+    } else {
+      // Fallback per page
+      for (const p of pages) {
+        parsedSections.push({
+          id: `sec_${docId}_p${p.pageNumber}`,
+          title: `${fileName} - Trang ${p.pageNumber}`,
+          sectionPath: [fileName, `Trang ${p.pageNumber}`],
+          pageStart: p.pageNumber,
+          pageEnd: p.pageNumber,
+          content: p.content
+        });
+      }
     }
 
     return {
       documentId: docId,
       title: fileName,
-      pages: rawDoc.pages || [],
+      pages,
       sections: parsedSections,
       blocks: parsedBlocks,
-      tables: parsedTables,
+      tables: [],
       metadata: {
         fileName,
         mimeType: 'application/pdf',
         pageCount: rawDoc.pageCount || 1,
         documentType: 'generic',
-        processingVersion: 'v2.0',
+        processingVersion: 'v3.2',
         extractionMethod: rawDoc.extractionMethod
       },
       rawText,
@@ -147,3 +163,5 @@ CRITICAL REQUIREMENT: Do NOT modify, rewrite, or hallucinate any numbers, names,
     };
   }
 }
+
+
