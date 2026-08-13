@@ -148,9 +148,16 @@ app.post('/api/documents/seed-sample', async (c) => {
   try {
     const d1Repo = new D1DocumentRepository(c.env.DB);
     const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
-    const docId = `doc_demo_sample_${Date.now()}`;
+    const docId = `doc_demo_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const fileName = 'Hop_dong_mua_ban_hang_hoa_mau.pdf';
     const r2Key = `documents/${docId}/Hop_dong_mua_ban_hang_hoa_mau.pdf`;
+
+    // Deactivate previous demo sample records to prevent unique constraint conflicts
+    try {
+      await c.env.DB.prepare(
+        `UPDATE document_records SET is_active = 0 WHERE file_name = ?`
+      ).bind(fileName).run();
+    } catch {}
 
     const sampleContractContent = `CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
 Độc lập - Tự do - Hạnh phúc
