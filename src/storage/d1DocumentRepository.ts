@@ -43,6 +43,7 @@ export class D1DocumentRepository {
       `ALTER TABLE document_records ADD COLUMN error_code TEXT`,
       `ALTER TABLE document_records ADD COLUMN error_message TEXT`,
       `ALTER TABLE document_records ADD COLUMN retry_count INTEGER DEFAULT 0`,
+      `ALTER TABLE document_records ADD COLUMN is_demo INTEGER DEFAULT 0`,
       `ALTER TABLE document_records ADD COLUMN uploaded_by TEXT DEFAULT 'system'`,
       `ALTER TABLE document_sections ADD COLUMN tenant_id TEXT DEFAULT 'tenant_default'`,
       `ALTER TABLE document_chunks ADD COLUMN tenant_id TEXT DEFAULT 'tenant_default'`,
@@ -312,7 +313,7 @@ export class D1DocumentRepository {
     await this.ensureSchemaColumns();
 
     const { results } = await this.db.prepare(
-      `SELECT doc_id, file_name, tenant_id, user_id, version, is_active, total_pages, total_chunks, processing_status, created_at 
+      `SELECT doc_id, file_name, tenant_id, user_id, version, is_active, total_pages, total_chunks, processing_status, is_demo, created_at 
        FROM document_records 
        WHERE is_active = 1 
          AND (user_id = ? OR ? = 'user_default')

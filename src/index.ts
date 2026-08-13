@@ -148,6 +148,12 @@ app.post('/api/admin/seed', async (c) => {
 app.get('/api/documents', async (c) => {
   try {
     const d1Repo = new D1DocumentRepository(c.env.DB);
+    try {
+      await c.env.DB.prepare(
+        `UPDATE document_records SET is_demo = 1 WHERE file_name LIKE 'Hop_dong_mua_ban%' OR doc_id LIKE '%demo%'`
+      ).run();
+    } catch {}
+
     const documents = await d1Repo.listActiveDocuments();
     return c.json({ documents });
   } catch (err) {
@@ -211,6 +217,17 @@ app.delete('/api/documents/:docId', async (c) => {
     const docId = c.req.param('docId');
     const d1Repo = new D1DocumentRepository(c.env.DB);
     const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
+
+    // Protection Check: Lock system demo files via DB column (is_demo = 1) so recruiters/testers cannot delete them
+    const docToDel = await d1Repo.getDocumentRecord(docId);
+    if (docToDel) {
+      const isDemoDoc = Number((docToDel as any).is_demo) === 1 || docId.toLowerCase().includes('demo');
+      if (isDemoDoc) {
+        return c.json({ 
+          error: 'Đây là tài liệu mẫu hệ thống dành cho Nhà tuyển dụng dùng thử (Không thể xóa).' 
+        }, 403);
+      }
+    }
 
     // 1. Mark status = DELETING to prevent concurrent retrieval
     await d1Repo.updateStatus(docId, 'DELETING', { errorMessage: 'Document deletion in progress' });
