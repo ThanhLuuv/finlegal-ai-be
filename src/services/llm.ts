@@ -56,12 +56,11 @@ export class LLMProviderService {
   public async processMultimodalDocument(pdfBuffer: ArrayBuffer, fileName: string): Promise<string | null> {
     if (pdfBuffer.byteLength > 20 * 1024 * 1024) return null;
 
-    const base64Data = arrayBufferToBase64(pdfBuffer);
-
-    // 1. Try Gemini API directly if GEMINI_API_KEY is provided
+    // 1. Try Google Gemini API directly if GEMINI_API_KEY is configured
     if (this.geminiApiKey) {
       try {
-        console.log('[LLM Vision] Calling Google Gemini API directly...');
+        console.log('[LLM Vision] Calling Google Gemini 2.0 Flash API directly...');
+        const base64Data = arrayBufferToBase64(pdfBuffer);
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.geminiApiKey}`;
         const res = await fetch(url, {
           method: 'POST',
@@ -92,21 +91,26 @@ export class LLMProviderService {
           }
         }
       } catch (err) {
-        console.warn('[LLM Vision Notice] Gemini API call notice:', err);
+        console.warn('[LLM Vision Notice] Gemini API notice:', err);
       }
     }
 
-    // 2. Try Workers AI Models (@cf/qwen/qwen3-30b-a3b-fp8, @cf/meta/llama-3.3-70b-instruct)
+    // 2. Try Workers AI Models (@cf/qwen/qwen3-30b-a3b-fp8, @cf/meta/llama-3.1-8b-instruct)
+    const textDecoder = new TextDecoder('utf-8');
+    let rawStr = '';
+    try { rawStr = textDecoder.decode(pdfBuffer); } catch {}
+    const compactText = rawStr.slice(0, 12000);
+
     const visionModels = [
       '@cf/qwen/qwen3-30b-a3b-fp8',
-      '@cf/meta/llama-3.3-70b-instruct',
-      '@cf/google/gemini-2.5-flash'
+      '@cf/meta/llama-3.1-8b-instruct',
+      '@cf/qwen/qwen1.5-14b-chat-awq'
     ];
 
-    if (this.ai) {
+    if (this.ai && compactText.trim().length > 10) {
       for (const modelName of visionModels) {
         try {
-          console.log(`[LLM Vision] Calling Cloudflare Workers AI Model: ${modelName}...`);
+          console.log(`[LLM Vision] Calling Workers AI Model: ${modelName}...`);
           const response = await (this.ai as any).run(modelName, {
             messages: [
               {
@@ -115,7 +119,7 @@ export class LLMProviderService {
               },
               {
                 role: 'user',
-                content: `FILENAME: ${fileName}\n\nDOCUMENT BASE64 DATA:\n${base64Data}`
+                content: `FILENAME: ${fileName}\n\nDOCUMENT TEXT SAMPLE:\n${compactText}`
               }
             ]
           }) as any;
@@ -158,27 +162,26 @@ export class LLMProviderService {
       }
     }
 
-    // Active Cloudflare Workers AI model catalog mapping
+    // Active Workers AI valid model catalog mapping
     let models: string[] = [];
 
     if (task === 'SMALL_LLM' || task === 'QUERY_REWRITE') {
       models = [
         '@cf/qwen/qwen3-30b-a3b-fp8',
         '@cf/meta/llama-3.1-8b-instruct',
-        '@cf/google/gemini-2.5-flash'
+        '@cf/qwen/qwen1.5-14b-chat-awq'
       ];
     } else if (task === 'PRIMARY_LLM' || task === 'MAIN_ANSWER') {
       models = [
         '@cf/qwen/qwen3-30b-a3b-fp8',
-        '@cf/meta/llama-3.3-70b-instruct',
         '@cf/meta/llama-3.1-8b-instruct',
-        '@cf/google/gemini-2.5-flash'
+        '@cf/qwen/qwen1.5-14b-chat-awq'
       ];
     } else {
       models = [
         '@cf/qwen/qwen3-30b-a3b-fp8',
-        '@cf/meta/llama-3.3-70b-instruct',
-        '@cf/meta/llama-3.1-8b-instruct'
+        '@cf/meta/llama-3.1-8b-instruct',
+        '@cf/qwen/qwen1.5-14b-chat-awq'
       ];
     }
 
