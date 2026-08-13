@@ -404,7 +404,7 @@ app.post('/api/chat/stream', async (c) => {
       } else if (record.request_count >= MAX_REQUESTS) {
         const minutesLeft = Math.ceil((record.reset_at - now) / 60000);
         return c.json({
-          error: `⚠️ Hệ thống bảo vệ tự động: Địa chỉ IP của bạn đã dùng hết 5 lượt hỏi trong 10 phút để tránh rủi ro spam. Vui lòng quay lại sau ${minutesLeft} phút!`
+          error: `Hệ thống bảo vệ tự động: Địa chỉ IP của bạn đã dùng hết 5 lượt hỏi trong 10 phút để tránh rủi ro quá tải. Vui lòng quay lại sau ${minutesLeft} phút!`
         }, 429);
       } else {
         // Increment count
