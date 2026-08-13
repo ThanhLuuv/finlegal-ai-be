@@ -148,12 +148,65 @@ export class LLMProviderService {
   }
 
   /**
+   * Calls Google Gemini 2.0 Flash REST API directly with 1M token context window.
+   */
+  public async callGeminiAPI(messages: LLMMessage[], temperature = 0.1): Promise<string | null> {
+    if (!this.geminiApiKey) return null;
+
+    try {
+      console.log('[LLM API Executing] Calling Google Gemini 2.0 Flash API...');
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.geminiApiKey}`;
+
+      const systemInstruction = messages.find(m => m.role === 'system')?.content;
+      const contents = messages
+        .filter(m => m.role !== 'system')
+        .map(m => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }]
+        }));
+
+      const body: any = { contents, generationConfig: { temperature } };
+      if (systemInstruction) {
+        body.systemInstruction = { parts: [{ text: systemInstruction }] };
+      }
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      if (res.ok) {
+        const data = await res.json() as any;
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text && text.trim().length > 0) {
+          console.log(`[LLM API Success] Gemini 2.0 Flash returned ${text.length} chars.`);
+          return text.trim();
+        }
+      } else {
+        const errText = await res.text();
+        console.warn('[LLM API Notice] Gemini API status:', res.status, errText);
+      }
+    } catch (err) {
+      console.warn('[LLM API Notice] Gemini API notice:', err);
+    }
+    return null;
+  }
+
+  /**
    * Generates completion with Task-Based & Role-Based Model Routing Strategy.
    */
   public async generateText(messages: LLMMessage[], options: LLMOptions = {}): Promise<string> {
     const temperature = options.temperature ?? 0.1;
     const maxTokens = options.max_tokens ?? 2048;
     const task = options.task || 'PRIMARY_LLM';
+
+    // 1. Primary Engine: Google Gemini 2.0 Flash API (1M Token Context Window, Ultra Fast)
+    if (this.geminiApiKey) {
+      const geminiRes = await this.callGeminiAPI(messages, temperature);
+      if (geminiRes) return geminiRes;
+    }
+
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
 
     if (options.modelOverride) {
@@ -194,7 +247,7 @@ export class LLMProviderService {
       ];
     }
 
-    // 1. Try Cloudflare Workers AI Edge models first
+    // 2. Secondary Engine: Cloudflare Workers AI Edge models
     for (const modelName of models) {
       try {
         console.log(`[LLM Executing] Task: ${task} -> Calling Workers AI Model: ${modelName}...`);
