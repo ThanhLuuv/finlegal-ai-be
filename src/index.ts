@@ -168,6 +168,43 @@ app.get('/api/documents/:docId', async (c) => {
   }
 });
 
+// 3.2. Direct Document File View / Preview Endpoint (Streams file from R2)
+app.get('/api/documents/:docId/view', async (c) => {
+  try {
+    const docId = c.req.param('docId');
+    const d1Repo = new D1DocumentRepository(c.env.DB);
+    const doc = await d1Repo.getDocumentRecord(docId);
+
+    if (!doc || !doc.r2_key) {
+      return c.json({ error: 'Không tìm thấy file tài liệu trên hệ thống lưu trữ R2.' }, 404);
+    }
+
+    const r2Object = await c.env.R2.get(doc.r2_key);
+    if (!r2Object) {
+      return c.json({ error: 'File tài liệu không tồn tại trên R2 Storage.' }, 404);
+    }
+
+    const ext = (doc.file_name || '').split('.').pop()?.toLowerCase() || '';
+    let contentType = 'application/octet-stream';
+    if (ext === 'pdf') contentType = 'application/pdf';
+    else if (ext === 'txt') contentType = 'text/plain; charset=utf-8';
+    else if (ext === 'csv') contentType = 'text/csv; charset=utf-8';
+
+    const headers = new Headers();
+    headers.set('Content-Type', contentType);
+    headers.set('Content-Disposition', `inline; filename="${encodeURIComponent(doc.file_name)}"`);
+    headers.set('Cache-Control', 'public, max-age=3600');
+
+    return new Response(r2Object.body, {
+      status: 200,
+      headers
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Không thể xem tài liệu: ${errorMsg}` }, 500);
+  }
+});
+
 // 3.5. Orchestrated Idempotent Delete Document Endpoint (Flow C §20 - DELETING status -> Vectors -> R2 -> D1)
 app.delete('/api/documents/:docId', async (c) => {
   try {
