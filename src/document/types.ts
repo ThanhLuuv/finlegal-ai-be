@@ -74,10 +74,35 @@ export interface ParsedDocument {
   warnings: string[];
 }
 
+export type SourceType = 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'txt' | 'generic';
+
+export interface SourceLocation {
+  sourceType: SourceType;
+  pageStart?: number;
+  pageEnd?: number;
+  slideNumber?: number;
+  sheetName?: string;
+  cellRange?: string;
+  headingPath?: string[];
+  blockStart?: string;
+  blockEnd?: string;
+}
+
+export interface PipelineMetadata {
+  pipelineVersion: string;
+  parserVersion: string;
+  chunkerVersion: string;
+  embeddingModel: string;
+  embeddingVersion: string;
+  indexedAt?: string;
+}
+
 export interface ChunkMetadata {
   docId: string;
   tenantId?: string;
   fileName: string;
+  sourceLocation?: SourceLocation;
+  pipelineMetadata?: PipelineMetadata;
   pageStart?: number;
   pageEnd?: number;
   sectionTitle?: string;
@@ -98,6 +123,8 @@ export interface RagChunk {
   tokenCount: number;
   contentHash: string;
   embeddingVersion: string;
+  pipelineVersion?: string;
+  sourceLocation?: SourceLocation;
   pageStart?: number;
   pageEnd?: number;
   metadata: ChunkMetadata;

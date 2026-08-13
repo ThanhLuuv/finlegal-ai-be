@@ -1,6 +1,7 @@
 // Cloudflare Vectorize Repository (Vector Storage & Metadata Filtering)
 
 import { RagChunk, ChunkMetadata } from '../document/types';
+import { RetrievalScope } from '../rag/types';
 
 export class VectorRepository {
   private vectorize: VectorizeIndex;
@@ -108,12 +109,12 @@ export class VectorRepository {
   }
 
   /**
-   * Queries Vectorize with mandatory metadata filtering when targetDocId or tenantId is specified
+   * Queries Vectorize with mandatory metadata filtering using RetrievalScope
    */
   public async queryVectorMatches(
     queryText: string,
     topK = 20,
-    selectedDocId?: string,
+    scope?: RetrievalScope | string,
     tenantId?: string
   ): Promise<Array<{
     chunkId: string;
@@ -124,8 +125,18 @@ export class VectorRepository {
     const queryVector = await this.generateEmbedding(queryText);
 
     const filterObj: Record<string, string> = {};
-    if (selectedDocId) filterObj.docId = selectedDocId;
-    if (tenantId && tenantId !== 'tenant_default') filterObj.tenantId = tenantId;
+
+    if (typeof scope === 'object' && scope) {
+      if (scope.documentIds && scope.documentIds.length === 1) {
+        filterObj.docId = scope.documentIds[0];
+      }
+      if (scope.tenantId && scope.tenantId !== 'tenant_default') {
+        filterObj.tenantId = scope.tenantId;
+      }
+    } else if (typeof scope === 'string') {
+      if (scope) filterObj.docId = scope;
+      if (tenantId && tenantId !== 'tenant_default') filterObj.tenantId = tenantId;
+    }
 
     const matches = await this.vectorize.query(queryVector, {
       topK,

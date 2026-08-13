@@ -23,9 +23,12 @@ export class AdvancedRAGAgent extends BaseAgent {
     this.recordThought(state, 'Executing Vector Retrieval & Lexical Reranking with Metadata Filtering...');
 
     try {
+      const scope = (state as any).scope || state.selectedDocId;
+      const history = (state as any).history || [];
       const ragResult = await this.ragService.retrieveEvidence(
         state.userPrompt,
-        state.selectedDocId
+        scope,
+        history
       );
 
       state.ragContext = ragResult.formattedContext;

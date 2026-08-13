@@ -19,6 +19,7 @@ import { VectorRepository } from './storage/vectorRepository';
 import { D1DocumentRepository } from './storage/d1DocumentRepository';
 import { AnswerAgent } from './agents/answerAgent';
 import { LangfuseLogger } from './utils/langfuse';
+import { RetrievalScope } from './rag/types';
 
 
 // Bindings Environment Interface for Workers
@@ -47,7 +48,7 @@ app.use('*', async (c, next) => {
 
   // Block known malicious scanner bot signatures
   const suspiciousBotSignatures = [
-    'sqlmap', 'nikto', 'nmap', 'masscan', 'zgrab', 
+    'sqlmap', 'nikto', 'nmap', 'masscan', 'zgrab',
     'eval-at-log', 'dirbuster', 'gobuster', 'python-urllib'
   ];
 
@@ -115,7 +116,7 @@ app.post('/api/admin/seed', async (c) => {
 
     const d1Service = new D1DatabaseService(c.env.DB);
     const { results: existing } = await c.env.DB.prepare('SELECT COUNT(*) as count FROM sales_transactions').all<{ count: number }>();
-    
+
     if (existing && existing[0]?.count > 0) {
       return c.json({ message: 'Database already contains sales transactions.', count: existing[0].count });
     }
@@ -362,11 +363,25 @@ app.post('/api/documents/:docId/version', async (c) => {
 // 4. Real-time Multi-Agent SSE Chat & Audit Streaming Handler
 app.post('/api/chat/stream', async (c) => {
   const startTime = Date.now();
-  const body = await c.req.json<{ prompt: string; docId?: string; sessionId?: string }>();
+  const body = await c.req.json<{
+    prompt: string;
+    docId?: string;
+    sessionId?: string;
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  }>();
   const prompt = body.prompt;
   const docId = body.docId;
   const sessionId = body.sessionId || crypto.randomUUID();
   const traceId = crypto.randomUUID();
+  const history = body.history || [];
+
+  const tenantId = c.req.header('x-tenant-id') || 'tenant_default';
+  const userId = c.req.header('x-user-id') || 'user_default';
+  const scope: RetrievalScope = {
+    tenantId,
+    userId,
+    documentIds: docId ? [docId] : undefined
+  };
 
   if (!prompt || prompt.trim().length === 0) {
     return c.json({ error: 'Prompt is required' }, 400);
@@ -386,8 +401,8 @@ app.post('/api/chat/stream', async (c) => {
         await c.env.DB.prepare('UPDATE ip_rate_limits SET request_count = 1, reset_at = ? WHERE ip = ?').bind(now + WINDOW_MS, clientIp).run();
       } else if (record.request_count >= MAX_REQUESTS) {
         const minutesLeft = Math.ceil((record.reset_at - now) / 60000);
-        return c.json({ 
-          error: `⚠️ Hệ thống bảo vệ tự động: Địa chỉ IP của bạn đã dùng hết 5 lượt hỏi trong 10 phút để tránh rủi ro spam. Vui lòng quay lại sau ${minutesLeft} phút!` 
+        return c.json({
+          error: `⚠️ Hệ thống bảo vệ tự động: Địa chỉ IP của bạn đã dùng hết 5 lượt hỏi trong 10 phút để tránh rủi ro spam. Vui lòng quay lại sau ${minutesLeft} phút!`
         }, 429);
       } else {
         // Increment count
@@ -433,6 +448,8 @@ app.post('/api/chat/stream', async (c) => {
       thoughtProcess: [],
       finalAnswer: ''
     };
+    (state as any).scope = scope;
+    (state as any).history = history;
 
     await sendEvent('status', { phase: 'STARTED', traceId, sessionId });
 
@@ -485,15 +502,15 @@ app.post('/api/chat/stream', async (c) => {
           await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
         }
 
-        
+
         const ragResult = (state as any).ragResult;
         state.finalAnswer = await answerAgent.generateAnswer(state, ragResult);
       } else {
         // General Chat
         const generalReply = await llm.generateText([
-          { 
-            role: 'system', 
-            content: 'Bạn là Trợ lý AI FinLegal AI chuyên phân tích Hợp đồng và Đối soát Số liệu Bán hàng Doanh nghiệp. Bạn BẮT BUỘC phải trả lời bằng Tiếng Việt 100%, lịch sự, chuyên nghiệp và ngắn gọn.' 
+          {
+            role: 'system',
+            content: 'Bạn là Trợ lý AI FinLegal AI chuyên phân tích Hợp đồng và Đối soát Số liệu Bán hàng Doanh nghiệp. Bạn BẮT BUỘC phải trả lời bằng Tiếng Việt 100%, lịch sự, chuyên nghiệp và ngắn gọn.'
           },
           { role: 'user', content: prompt }
         ]);

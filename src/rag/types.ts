@@ -1,4 +1,4 @@
-// RAG Engine Types, Citations & Evidence Models
+import { SourceLocation } from '../document/types';
 
 export interface Citation {
   documentId: string;
@@ -8,6 +8,7 @@ export interface Citation {
   pageStart?: number;
   pageEnd?: number;
   chunkId: string;
+  sourceLocation?: SourceLocation;
 }
 
 export interface EvidenceBlock {
@@ -15,7 +16,24 @@ export interface EvidenceBlock {
   documentId: string;
   content: string;
   score: number;
+  vectorScore?: number;
+  lexicalScore?: number;
+  rrfScore?: number;
   citation: Citation;
+}
+
+export interface RetrievalScope {
+  tenantId: string;
+  userId?: string;
+  documentIds?: string[];
+  folderIds?: string[];
+  versionIds?: string[];
+  authorizedDocumentIds?: string[];
+}
+
+export interface ConversationMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
 }
 
 export interface QueryAnalysis {
@@ -25,6 +43,7 @@ export interface QueryAnalysis {
   targetDocId?: string;
   documentTypeFilter?: string;
   sectionFilter?: string;
+  scope?: RetrievalScope;
 }
 
 export interface RetrievalResult {

@@ -1,15 +1,66 @@
-// Grounded Citation Validator (Flow B §17: Verify Evidence IDs [E1], [E2] and map verified sources)
-
 import { Citation, EvidenceBlock } from './types';
+import { SourceLocation } from '../document/types';
+
+export interface FormattedSourceLocation {
+  displayLabel: string;
+  documentName: string;
+  sourceType: string;
+  sectionTitle?: string;
+  pageStart?: number;
+  pageEnd?: number;
+  slideNumber?: number;
+  sheetName?: string;
+  cellRange?: string;
+}
 
 export interface VerifiedCitationResult {
   answer: string;
   citedEvidences: Citation[];
+  formattedSources: FormattedSourceLocation[];
   hasInvalidCitations: boolean;
   warnings: string[];
 }
 
 export class CitationValidator {
+  /**
+   * Formats a generic SourceLocation into a clean, human-readable display label
+   */
+  public static formatSourceLocation(citation: Citation): FormattedSourceLocation {
+    const docName = citation.documentName || 'document.pdf';
+    const ext = docName.split('.').pop()?.toLowerCase() || 'pdf';
+    const section = citation.sectionTitle || (citation.sectionPath && citation.sectionPath.length > 0 ? citation.sectionPath.join(' > ') : '');
+
+    let displayLabel = `📄 ${docName}`;
+
+    if (ext === 'pdf') {
+      const pageStr = citation.pageStart ? `Trang ${citation.pageStart}` : '';
+      displayLabel = [docName, pageStr, section].filter(Boolean).join(' · ');
+    } else if (ext === 'docx') {
+      displayLabel = `📝 ${docName}${section ? ' · ' + section : ''}`;
+    } else if (ext === 'pptx') {
+      const slide = citation.sourceLocation?.slideNumber || citation.pageStart || 1;
+      displayLabel = `📊 ${docName} · Slide ${slide}${section ? ' · ' + section : ''}`;
+    } else if (ext === 'xlsx') {
+      const sheet = citation.sourceLocation?.sheetName || 'Sheet1';
+      const cell = citation.sourceLocation?.cellRange ? ` (${citation.sourceLocation.cellRange})` : '';
+      displayLabel = `📈 ${docName} · ${sheet}${cell}`;
+    } else {
+      displayLabel = [docName, section].filter(Boolean).join(' · ');
+    }
+
+    return {
+      displayLabel,
+      documentName: docName,
+      sourceType: ext,
+      sectionTitle: citation.sectionTitle,
+      pageStart: citation.pageStart,
+      pageEnd: citation.pageEnd,
+      slideNumber: citation.sourceLocation?.slideNumber,
+      sheetName: citation.sourceLocation?.sheetName,
+      cellRange: citation.sourceLocation?.cellRange
+    };
+  }
+
   /**
    * Parses Evidence IDs like [E1], [E2] from generated answer text,
    * verifies their existence against the retrieved evidence pool,
@@ -46,9 +97,12 @@ export class CitationValidator {
       evidencePool.slice(0, 3).forEach(e => citedEvidences.push(e.citation));
     }
 
+    const formattedSources = citedEvidences.map(c => CitationValidator.formatSourceLocation(c));
+
     return {
       answer: rawAnswer,
       citedEvidences,
+      formattedSources,
       hasInvalidCitations: warnings.length > 0,
       warnings
     };

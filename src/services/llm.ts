@@ -5,11 +5,14 @@ export interface LLMMessage {
   content: string;
 }
 
+export type ModelRole = 'SMALL_LLM' | 'PRIMARY_LLM' | 'COMPLEX_LLM' | 'EMBEDDING_MODEL' | 'QUERY_REWRITE' | 'MAIN_ANSWER' | 'STRUCTURE_PARSING';
+
 export interface LLMOptions {
   temperature?: number;
   max_tokens?: number;
   jsonMode?: boolean;
-  task?: 'QUERY_REWRITE' | 'MAIN_ANSWER' | 'STRUCTURE_PARSING';
+  task?: ModelRole;
+  modelOverride?: string;
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -75,7 +78,7 @@ export class LLMProviderService {
             }
           }
         } catch (err) {
-          console.warn(`Multimodal AI model ${modelName} notice:`, err);
+          console.warn(`Multimodal AI extraction attempt failed for model ${modelName}:`, err);
         }
       }
     }
@@ -84,27 +87,45 @@ export class LLMProviderService {
   }
 
   /**
-   * Generates completion with Task-Based Model Routing Strategy.
+   * Generates completion with Task-Based & Role-Based Model Routing Strategy.
    */
   public async generateText(messages: LLMMessage[], options: LLMOptions = {}): Promise<string> {
     const temperature = options.temperature ?? 0.1;
     const maxTokens = options.max_tokens ?? 2048;
-    const task = options.task || 'MAIN_ANSWER';
+    const task = options.task || 'PRIMARY_LLM';
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
 
-    // Task-specific model priority list
+    if (options.modelOverride) {
+      try {
+        const response = await (this.ai as any).run(options.modelOverride, {
+          messages: formattedMessages,
+          temperature,
+          max_tokens: maxTokens,
+        });
+        if (response && response.response) return response.response;
+      } catch (err) {
+        console.warn(`Model override ${options.modelOverride} failed:`, err);
+      }
+    }
+
+    // Role-based model catalog mapping
     let models: string[] = [];
 
-    if (task === 'QUERY_REWRITE') {
+    if (task === 'SMALL_LLM' || task === 'QUERY_REWRITE') {
       models = [
         '@cf/meta/llama-3.1-8b-instruct',
         '@cf/qwen/qwen1.5-14b-chat-awq'
       ];
-    } else if (task === 'MAIN_ANSWER') {
+    } else if (task === 'PRIMARY_LLM' || task === 'MAIN_ANSWER') {
       models = [
         '@cf/qwen/qwen3-30b-a3b-fp8',
         '@cf/meta/llama-3.3-70b-instruct',
         '@cf/meta/llama-3.1-8b-instruct'
+      ];
+    } else if (task === 'COMPLEX_LLM') {
+      models = [
+        '@cf/meta/llama-3.3-70b-instruct',
+        '@cf/qwen/qwen3-30b-a3b-fp8'
       ];
     } else {
       models = [
