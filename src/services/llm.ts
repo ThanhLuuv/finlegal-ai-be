@@ -50,12 +50,10 @@ function extractLLMResponseText(res: any): string | null {
 
 export class LLMProviderService {
   private ai: Ai;
-  private geminiApiKey?: string;
   private openaiApiKey?: string;
 
-  constructor(ai: Ai, geminiApiKey?: string, openaiApiKey?: string) {
+  constructor(ai: Ai, openaiApiKey?: string) {
     this.ai = ai;
-    this.geminiApiKey = geminiApiKey;
     this.openaiApiKey = openaiApiKey;
   }
 
@@ -65,53 +63,7 @@ export class LLMProviderService {
   public async processMultimodalDocument(pdfBuffer: ArrayBuffer, fileName: string): Promise<string | null> {
     if (pdfBuffer.byteLength > 20 * 1024 * 1024) return null;
 
-    // 1. Try Google Gemini API directly if GEMINI_API_KEY is configured
-    if (this.geminiApiKey) {
-      const geminiModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'];
-      const base64Data = arrayBufferToBase64(pdfBuffer);
-
-      for (const geminiModel of geminiModels) {
-        try {
-          console.log(`[LLM Vision] Calling Google Gemini API (${geminiModel})...`);
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${this.geminiApiKey}`;
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType: 'application/pdf',
-                      data: base64Data
-                    }
-                  },
-                  {
-                    text: `FILENAME: ${fileName}\n\nTask: Read and extract ALL text, candidate names, contact info, skills, work experience, section titles, and tables accurately into clean Markdown format. Return ONLY the extracted text.`
-                  }
-                ]
-              }]
-            })
-          });
-
-          if (res.ok) {
-            const data = await res.json() as any;
-            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (text && text.trim().length > 10) {
-              console.log(`[LLM Vision Success] Gemini API (${geminiModel}) extracted ${text.length} chars.`);
-              return text.trim();
-            }
-          } else {
-            const errBody = await res.text();
-            console.warn(`[LLM Vision Notice] Gemini API (${geminiModel}) HTTP ${res.status}:`, errBody);
-          }
-        } catch (err) {
-          console.warn(`[LLM Vision Notice] Gemini API (${geminiModel}) notice:`, err);
-        }
-      }
-    }
-
-    // 2. Try Workers AI Models (@cf/qwen/qwen3-30b-a3b-fp8, @cf/mistral/mistral-7b-instruct-v0.1)
+    // Try Workers AI Native Models (@cf/qwen/qwen3-30b-a3b-fp8, @cf/mistral/mistral-7b-instruct-v0.1)
     const textDecoder = new TextDecoder('utf-8');
     let rawStr = '';
     try { rawStr = textDecoder.decode(pdfBuffer); } catch {}
@@ -154,68 +106,12 @@ export class LLMProviderService {
   }
 
   /**
-   * Calls Google Gemini REST API directly with 1M token context window.
-   */
-  public async callGeminiAPI(messages: LLMMessage[], temperature = 0.1): Promise<string | null> {
-    if (!this.geminiApiKey) return null;
-
-    const geminiModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'];
-    const systemInstruction = messages.find(m => m.role === 'system')?.content;
-    const contents = messages
-      .filter(m => m.role !== 'system')
-      .map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-      }));
-
-    for (const geminiModel of geminiModels) {
-      try {
-        console.log(`[LLM API Executing] Calling Google Gemini API (${geminiModel})...`);
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${this.geminiApiKey}`;
-
-        const body: any = { contents, generationConfig: { temperature } };
-        if (systemInstruction) {
-          body.systemInstruction = { parts: [{ text: systemInstruction }] };
-        }
-
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-
-        if (res.ok) {
-          const data = await res.json() as any;
-          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (text && text.trim().length > 0) {
-            console.log(`[LLM API Success] Gemini API (${geminiModel}) returned ${text.length} chars.`);
-            return text.trim();
-          }
-        } else {
-          const errText = await res.text();
-          console.warn(`[LLM API Notice] Gemini API (${geminiModel}) HTTP ${res.status}:`, errText);
-        }
-      } catch (err) {
-        console.warn(`[LLM API Notice] Gemini API (${geminiModel}) notice:`, err);
-      }
-    }
-    return null;
-  }
-
-  /**
    * Generates completion with Task-Based & Role-Based Model Routing Strategy.
    */
   public async generateText(messages: LLMMessage[], options: LLMOptions = {}): Promise<string> {
     const temperature = options.temperature ?? 0.1;
     const maxTokens = options.max_tokens ?? 2048;
     const task = options.task || 'PRIMARY_LLM';
-
-    // 1. Primary Engine: Google Gemini 2.0 Flash API (1M Token Context Window, Ultra Fast)
-    if (this.geminiApiKey) {
-      const geminiRes = await this.callGeminiAPI(messages, temperature);
-      if (geminiRes) return geminiRes;
-    }
-
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
 
     if (options.modelOverride) {

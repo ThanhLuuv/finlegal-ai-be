@@ -238,7 +238,7 @@ app.post('/api/documents', async (c) => {
     const file = formData.get ? formData.get('file') : formData['file'];
     let fileName = 'document.pdf';
     let arrayBuffer: ArrayBuffer | null = null;
-    const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY, c.env.OPENAI_API_KEY);
+    const llm = new LLMProviderService(c.env.AI, c.env.OPENAI_API_KEY);
 
     if (file && typeof file !== 'string' && 'arrayBuffer' in file) {
       fileName = file.name || 'contract_document.pdf';
@@ -332,7 +332,7 @@ app.post('/api/documents/:docId/version', async (c) => {
     }
 
     const newDocId = `doc_${Date.now()}`;
-    const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY, c.env.OPENAI_API_KEY);
+    const llm = new LLMProviderService(c.env.AI, c.env.OPENAI_API_KEY);
     const pipeline = new DocumentPipeline(
       llm,
       c.env.DB,
@@ -418,7 +418,7 @@ app.post('/api/chat/stream', async (c) => {
   }
 
   // Initialize Services & Repositories
-  const llm = new LLMProviderService(c.env.AI, c.env.GEMINI_API_KEY, c.env.OPENAI_API_KEY);
+  const llm = new LLMProviderService(c.env.AI, c.env.OPENAI_API_KEY);
   const d1Service = new D1DatabaseService(c.env.DB);
   const d1Repo = new D1DocumentRepository(c.env.DB);
   const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
