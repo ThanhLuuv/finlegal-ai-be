@@ -40,7 +40,15 @@ export interface Bindings {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// 1. Cloudflare Anti-Bot & Threat Protection Middleware (with Turnstile Support)
+// 1. Enable Global CORS for Next.js Cloudflare Pages Frontend (Must be FIRST for OPTIONS preflight)
+app.use('*', cors({
+  origin: '*',
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Turnstile-Token', 'x-tenant-id', 'x-user-id', 'x-admin-key', 'X-Tenant-Id', 'X-User-Id', 'X-Admin-Key', '*'],
+  allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS', 'PUT', 'PATCH'],
+  maxAge: 86400,
+}));
+
+// 2. Cloudflare Anti-Bot & Threat Protection Middleware (with Turnstile Support)
 app.use('*', async (c, next) => {
   const userAgent = c.req.header('user-agent') || '';
   const clientIP = c.req.header('cf-connecting-ip') || 'unknown';
@@ -88,13 +96,6 @@ app.use('*', async (c, next) => {
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   c.header('X-Protection-Provider', 'Cloudflare Serverless Edge Bot Defense & Turnstile');
 });
-
-// 2. Enable CORS for Next.js Cloudflare Pages Frontend
-app.use('*', cors({
-  origin: '*',
-  allowHeaders: ['Content-Type', 'Authorization', 'X-Turnstile-Token'],
-  allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
-}));
 
 // 1. Health Check Endpoint
 app.get('/api/health', (c) => {
