@@ -98,13 +98,16 @@ export class LLMProviderService {
             console.log(`[LLM Vision Success] Gemini API extracted ${text.length} chars.`);
             return text.trim();
           }
+        } else {
+          const errBody = await res.text();
+          console.warn(`[LLM Vision Notice] Gemini API HTTP ${res.status}:`, errBody);
         }
       } catch (err) {
         console.warn('[LLM Vision Notice] Gemini API notice:', err);
       }
     }
 
-    // 2. Try Workers AI Models (@cf/qwen/qwen3-30b-a3b-fp8, @cf/meta/llama-3.1-8b-instruct)
+    // 2. Try Workers AI Models (@cf/qwen/qwen3-30b-a3b-fp8, @cf/mistral/mistral-7b-instruct-v0.1)
     const textDecoder = new TextDecoder('utf-8');
     let rawStr = '';
     try { rawStr = textDecoder.decode(pdfBuffer); } catch {}
@@ -112,7 +115,6 @@ export class LLMProviderService {
 
     const visionModels = [
       '@cf/qwen/qwen3-30b-a3b-fp8',
-      '@cf/meta/llama-3-8b-instruct',
       '@cf/mistral/mistral-7b-instruct-v0.1'
     ];
 
@@ -185,7 +187,7 @@ export class LLMProviderService {
         }
       } else {
         const errText = await res.text();
-        console.warn('[LLM API Notice] Gemini API status:', res.status, errText);
+        console.warn(`[LLM API Notice] Gemini API HTTP ${res.status}:`, errText);
       }
     } catch (err) {
       console.warn('[LLM API Notice] Gemini API notice:', err);
@@ -225,27 +227,10 @@ export class LLMProviderService {
     }
 
     // Active Workers AI valid model catalog mapping
-    let models: string[] = [];
-
-    if (task === 'SMALL_LLM' || task === 'QUERY_REWRITE') {
-      models = [
-        '@cf/qwen/qwen3-30b-a3b-fp8',
-        '@cf/meta/llama-3-8b-instruct',
-        '@cf/mistral/mistral-7b-instruct-v0.1'
-      ];
-    } else if (task === 'PRIMARY_LLM' || task === 'MAIN_ANSWER') {
-      models = [
-        '@cf/qwen/qwen3-30b-a3b-fp8',
-        '@cf/meta/llama-3-8b-instruct',
-        '@cf/mistral/mistral-7b-instruct-v0.1'
-      ];
-    } else {
-      models = [
-        '@cf/qwen/qwen3-30b-a3b-fp8',
-        '@cf/meta/llama-3-8b-instruct',
-        '@cf/mistral/mistral-7b-instruct-v0.1'
-      ];
-    }
+    const models = [
+      '@cf/qwen/qwen3-30b-a3b-fp8',
+      '@cf/mistral/mistral-7b-instruct-v0.1'
+    ];
 
     // 2. Secondary Engine: Cloudflare Workers AI Edge models
     for (const modelName of models) {
