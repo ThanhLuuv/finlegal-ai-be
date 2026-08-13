@@ -8,7 +8,7 @@ export class ContextBuilder {
    * Groups contiguous or related section chunks under their parent section header to prevent context loss.
    */
   public buildContext(query: QueryAnalysis, evidence: EvidenceBlock[]): RetrievalResult {
-    const hasEvidence = evidence.length > 0 && evidence.some(e => e.score > 0.05);
+    const hasEvidence = evidence.length > 0;
 
     if (!hasEvidence) {
       return {
