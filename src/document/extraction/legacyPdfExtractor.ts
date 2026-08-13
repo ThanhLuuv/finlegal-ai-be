@@ -84,22 +84,27 @@ export function isPDFSyntaxChunk(text: string): boolean {
 export function isCMapFontGarbage(text: string): boolean {
   if (!text || text.trim().length === 0) return true;
 
-  // Unprintable control codes and replacement bytes
+  // 1. Control character noise check
   const controlGarbage = text.match(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/g) || [];
-  if (controlGarbage.length / text.length > 0.1) return true;
+  if (controlGarbage.length / text.length > 0.02) return true;
 
-  // Check ratio of valid readable characters (including Vietnamese diacritics & standard punctuation)
+  // 2. Alphanumeric & Vietnamese Unicode & Standard Punctuation ratio
   const validReadableChars = text.match(/[A-Za-z0-9À-ỹ\u0100-\u024F\u1EA0-\u1EF9\s\.,:\-\(\)\/\$\%\&\@\+\=\_\;\"\'\?\!\<\>\[\]\{\}]/g) || [];
   const validRatio = validReadableChars.length / text.length;
+  if (validRatio < 0.70) return true;
 
-  return validRatio < 0.35;
+  // 3. Word token structure sanity check
+  const tokens = text.trim().split(/\s+/).filter(t => t.length > 0);
+  if (tokens.length >= 4) {
+    const validTokens = tokens.filter(t => /^[A-Za-z0-9À-ỹ\u0100-\u024F\u1EA0-\u1EF9\.,:\-\(\)\/\$\%\&\@\+\=\_\;\"\'\?\!\<\>\[\]\{\}]+$/.test(t));
+    if (validTokens.length / tokens.length < 0.60) return true;
+  }
+
+  return false;
 }
 
 export function isBinaryNoise(text: string): boolean {
-  if (!text || text.trim().length < 4) return true;
-  const validChars = text.match(/[A-Za-z0-9À-ỹ\u0100-\u024F\u1EA0-\u1EF9\s\.,:\-\(\)\/\$\%\&\@\+\=\_\;\"\'\?\!\<\>\[\]\{\}]/g) || [];
-  const validRatio = validChars.length / text.length;
-  return validRatio < 0.35;
+  return isCMapFontGarbage(text);
 }
 
 async function decompressFlate(data: Uint8Array): Promise<Uint8Array | null> {

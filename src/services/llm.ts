@@ -26,10 +26,12 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 
 export class LLMProviderService {
   private ai: Ai;
+  private geminiApiKey?: string;
   private openaiApiKey?: string;
 
-  constructor(ai: Ai, _geminiApiKey?: string, openaiApiKey?: string) {
+  constructor(ai: Ai, geminiApiKey?: string, openaiApiKey?: string) {
     this.ai = ai;
+    this.geminiApiKey = geminiApiKey;
     this.openaiApiKey = openaiApiKey;
   }
 
@@ -37,48 +39,112 @@ export class LLMProviderService {
    * Directly extracts and structures PDF documents using Multimodal Vision AI.
    */
   public async processMultimodalDocument(pdfBuffer: ArrayBuffer, fileName: string): Promise<string | null> {
-    if (!this.openaiApiKey || pdfBuffer.byteLength > 10 * 1024 * 1024) return null;
+    if (pdfBuffer.byteLength > 20 * 1024 * 1024) return null;
 
     const base64Data = arrayBufferToBase64(pdfBuffer);
-    const endpoints = [
-      'https://agentrouter.org/v1/chat/completions',
-      'https://api.openai.com/v1/chat/completions'
-    ];
-    const models = ['gpt-5.6-sol', 'gpt-5.5', 'gpt-4o'];
 
-    for (const endpoint of endpoints) {
-      for (const modelName of models) {
-        try {
-          const res = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${this.openaiApiKey}`
+    // 1. Try Cloudflare Workers AI @cf/google/gemini-2.5-flash directly
+    if (this.ai) {
+      try {
+        const response = await (this.ai as any).run('@cf/google/gemini-2.5-flash', {
+          messages: [
+            {
+              role: 'system',
+              content: 'You are FinLegal AI Document Extractor. Extract ALL text, candidate names, contact details, skills, work experience, section titles, and tables accurately into clean Markdown format. Return ONLY the extracted text.'
             },
-            body: JSON.stringify({
-              model: modelName,
-              messages: [
+            {
+              role: 'user',
+              content: `FILENAME: ${fileName}\n\nPDF BASE64 DATA:\n${base64Data}`
+            }
+          ]
+        });
+
+        if (response && response.response && response.response.trim().length > 20) {
+          return response.response.trim();
+        }
+      } catch (cfErr) {
+        console.warn('Workers AI @cf/google/gemini-2.5-flash extraction notice:', cfErr);
+      }
+    }
+
+    // 2. Try Gemini Multimodal Vision API (Natively parses PDFs directly)
+    if (this.geminiApiKey) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.geminiApiKey}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
                 {
-                  role: 'system',
-                  content: 'You are FinLegal AI Document Extractor. Extract ALL text, candidate names, skills, clauses, experience, and tables accurately into clean Markdown format. Return ONLY the extracted Markdown text.'
+                  inlineData: {
+                    mimeType: 'application/pdf',
+                    data: base64Data
+                  }
                 },
                 {
-                  role: 'user',
-                  content: `FILENAME: ${fileName}\n\nPDF BASE64 DATA:\n${base64Data}`
+                  text: `FILENAME: ${fileName}\n\nTask: Read and extract ALL text, candidate names, contact info, skills, work experience, section titles, and tables accurately into clean Markdown format. Return ONLY the extracted text.`
                 }
               ]
-            })
-          });
+            }]
+          })
+        });
 
-          if (res.ok) {
-            const data = await res.json() as any;
-            const text = data.choices?.[0]?.message?.content;
-            if (text && text.trim().length > 20) {
-              return text.trim();
-            }
+        if (res.ok) {
+          const data = await res.json() as any;
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text && text.trim().length > 20) {
+            return text.trim();
           }
-        } catch (err) {
-          console.warn(`Multimodal AI extraction attempt failed for model ${modelName}:`, err);
+        }
+      } catch (err) {
+        console.warn('Gemini 2.0 Multimodal PDF extraction notice:', err);
+      }
+    }
+
+    // 3. Try OpenAI / Router Multimodal Endpoint
+    if (this.openaiApiKey) {
+      const endpoints = [
+        'https://agentrouter.org/v1/chat/completions',
+        'https://api.openai.com/v1/chat/completions'
+      ];
+      const models = ['gpt-4o', 'gpt-4o-mini'];
+
+      for (const endpoint of endpoints) {
+        for (const modelName of models) {
+          try {
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.openaiApiKey}`
+              },
+              body: JSON.stringify({
+                model: modelName,
+                messages: [
+                  {
+                    role: 'system',
+                    content: 'You are FinLegal AI Document Extractor. Extract ALL text, candidate names, skills, clauses, experience, and tables accurately into clean Markdown format. Return ONLY the extracted Markdown text.'
+                  },
+                  {
+                    role: 'user',
+                    content: `FILENAME: ${fileName}\n\nPDF BASE64 DATA:\n${base64Data}`
+                  }
+                ]
+              })
+            });
+
+            if (res.ok) {
+              const data = await res.json() as any;
+              const text = data.choices?.[0]?.message?.content;
+              if (text && text.trim().length > 20) {
+                return text.trim();
+              }
+            }
+          } catch {
+            // try next model
+          }
         }
       }
     }
@@ -108,27 +174,30 @@ export class LLMProviderService {
       }
     }
 
-    // Role-based model catalog mapping
+    // Role-based model catalog mapping with @cf/google/gemini-2.5-flash as #1 primary
     let models: string[] = [];
 
     if (task === 'SMALL_LLM' || task === 'QUERY_REWRITE') {
       models = [
+        '@cf/google/gemini-2.5-flash',
         '@cf/meta/llama-3.1-8b-instruct',
         '@cf/qwen/qwen1.5-14b-chat-awq'
       ];
     } else if (task === 'PRIMARY_LLM' || task === 'MAIN_ANSWER') {
       models = [
+        '@cf/google/gemini-2.5-flash',
         '@cf/qwen/qwen3-30b-a3b-fp8',
-        '@cf/meta/llama-3.3-70b-instruct',
-        '@cf/meta/llama-3.1-8b-instruct'
+        '@cf/meta/llama-3.3-70b-instruct'
       ];
     } else if (task === 'COMPLEX_LLM') {
       models = [
+        '@cf/google/gemini-2.5-flash',
         '@cf/meta/llama-3.3-70b-instruct',
         '@cf/qwen/qwen3-30b-a3b-fp8'
       ];
     } else {
       models = [
+        '@cf/google/gemini-2.5-flash',
         '@cf/qwen/qwen3-30b-a3b-fp8',
         '@cf/meta/llama-3.1-8b-instruct'
       ];
