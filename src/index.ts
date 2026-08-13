@@ -218,17 +218,6 @@ app.delete('/api/documents/:docId', async (c) => {
     const d1Repo = new D1DocumentRepository(c.env.DB);
     const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
 
-    // Protection Check: Lock system demo files via DB column (is_demo = 1) so recruiters/testers cannot delete them
-    const docToDel = await d1Repo.getDocumentRecord(docId);
-    if (docToDel) {
-      const isDemoDoc = Number((docToDel as any).is_demo) === 1 || docId.toLowerCase().includes('demo');
-      if (isDemoDoc) {
-        return c.json({ 
-          error: 'Đây là tài liệu mẫu hệ thống dành cho Nhà tuyển dụng dùng thử (Không thể xóa).' 
-        }, 403);
-      }
-    }
-
     // 1. Mark status = DELETING to prevent concurrent retrieval
     await d1Repo.updateStatus(docId, 'DELETING', { errorMessage: 'Document deletion in progress' });
 
