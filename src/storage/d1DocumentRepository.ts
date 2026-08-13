@@ -14,8 +14,8 @@ export class D1DocumentRepository {
    */
   public async createInitialRecord(docId: string, fileName: string, r2Key: string): Promise<void> {
     await this.db.prepare(
-      `INSERT INTO document_records (doc_id, file_name, r2_key, processing_status, created_at)
-       VALUES (?, ?, ?, 'UPLOADED', ?)`
+      `INSERT INTO document_records (doc_id, file_name, r2_key, total_pages, total_chunks, processing_status, created_at)
+       VALUES (?, ?, ?, 1, 0, 'UPLOADED', ?)`
     ).bind(docId, fileName, r2Key, new Date().toISOString()).run();
   }
 
