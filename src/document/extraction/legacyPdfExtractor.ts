@@ -194,7 +194,7 @@ export async function extractLegacyPdfText(buffer: ArrayBuffer): Promise<string>
 
   if (decompressedTextBlocks.length > 0) {
     const fullText = stripPDFSyntaxNoise(decompressedTextBlocks.join('\n\n'));
-    if (fullText.length > 10 && !isBinaryNoise(fullText)) {
+    if (fullText.length > 10 && !isBinaryNoise(fullText) && !isCMapFontGarbage(fullText)) {
       return fullText;
     }
   }
@@ -213,7 +213,7 @@ export async function extractLegacyPdfText(buffer: ArrayBuffer): Promise<string>
     }
     if (extractedBtEt.length > 0) {
       const combinedBtEt = extractedBtEt.join('\n');
-      if (combinedBtEt.length > 10) {
+      if (combinedBtEt.length > 10 && !isCMapFontGarbage(combinedBtEt)) {
         return combinedBtEt;
       }
     }
@@ -228,7 +228,7 @@ export async function extractLegacyPdfText(buffer: ArrayBuffer): Promise<string>
 
     if (validSequences.length > 0) {
       const combinedSequences = validSequences.join('\n');
-      if (combinedSequences.length > 15) {
+      if (combinedSequences.length > 15 && !isCMapFontGarbage(combinedSequences)) {
         return combinedSequences;
       }
     }
