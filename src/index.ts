@@ -143,6 +143,85 @@ app.post('/api/admin/seed', async (c) => {
     return c.json({ error: `Lỗi khởi tạo dữ liệu mẫu: ${errorMsg}` }, 500);
   }
 });
+// 3.0. Seed Sample Contract Document Endpoint for Recruiter/Demo Testing
+app.post('/api/documents/seed-sample', async (c) => {
+  try {
+    const d1Repo = new D1DocumentRepository(c.env.DB);
+    const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
+    const docId = `doc_demo_sample_${Date.now()}`;
+    const fileName = 'Hop_dong_mua_ban_hang_hoa_mau.pdf';
+    const r2Key = `documents/${docId}/Hop_dong_mua_ban_hang_hoa_mau.pdf`;
+
+    const sampleContractContent = `CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
+Độc lập - Tự do - Hạnh phúc
+---
+HỢP ĐỒNG MUA BÁN HÀNG HÓA MAU DÙNG THỬ
+Số: 01/2024/HĐMB-LEXIFIN
+
+Hôm nay, ngày 15 tháng 01 năm 2024, tại trụ sở Công ty.
+Chúng tôi gồm có:
+
+BÊN BÁN (BÊN A): CÔNG TY TNHH THƯƠNG MẠI & DỊCH VỤ LEXIFIN
+- Đại diện: Ông Nguyễn Văn An - Chức vụ: Giám đốc
+- Địa chỉ: Tầng 8, Tòa nhà LexiFin Tower, Quận 1, TP. Hồ Chí Minh
+- Mã số thuế: 0312345678 - Điện thoại: (028) 3822 9999
+
+BÊN MUA (BÊN B): CÔNG TY CỔ PHẦN CÔNG NGHỆ TOÀN CẦU (GLOBALTECH)
+- Đại diện: Bà Trần Thị Bình - Chức vụ: Tổng Giám đốc
+- Địa chỉ: Khu Công nghệ cao, Thành phố Thủ Đức, TP. Hồ Chí Minh
+- Mã số thuế: 0398765432 - Điện thoại: (028) 3730 8888
+
+ĐIỀU 1: ĐỐI TƯỢNG HỢP ĐỒNG VÀ GIÁ TRỊ
+1. Bên A đồng ý bán và Bên B đồng ý mua hệ thống thiết bị kiểm toán tự động.
+2. Tổng giá trị hợp đồng: 1.500.000.000 VNĐ (Một tỷ năm trăm triệu đồng chẵn).
+3. Giá trên đã bao gồm thuế Giá trị gia tăng (VAT 10%) và chi phí vận chuyển, lắp đặt.
+
+ĐIỀU 2: PHƯƠNG THỨC VÀ THỜI HẠN THANH TOÁN
+1. Đợt 1: Bên B thanh toán 30% giá trị hợp đồng (tương đương 450.000.000 VNĐ) trong vòng 05 ngày làm việc sau khi ký hợp đồng.
+2. Đợt 2: Bên B thanh toán 60% giá trị hợp đồng sau khi nghiệm thu giao nhận hàng hóa.
+3. Đợt 3: Bên B thanh toán 10% còn lại sau 30 ngày bảo hành.
+
+ĐIỀU 3: BẢO HÀNH VÀ ĐIỀU KHOẢN PHẠT VI PHẠM
+1. Thời gian bảo hành: 12 tháng kể từ ngày ký biên bản nghiệm thu.
+2. Phạt chậm giao hàng: Nếu Bên A chậm giao hàng quá 10 ngày, phạt 0.5% giá trị hợp đồng cho mỗi ngày chậm trễ, nhưng không quá 10% tổng giá trị hợp đồng.
+
+ĐIỀU 4: ĐIỀU KHOẢN CHUNG
+Hợp đồng này được lập thành 04 bản có giá trị pháp lý như nhau, mỗi bên giữ 02 bản.`;
+
+    const enc = new TextEncoder();
+    const bytes = enc.encode(sampleContractContent);
+
+    // Save to R2
+    await c.env.R2.put(r2Key, bytes, {
+      httpMetadata: { contentType: 'text/plain; charset=utf-8' }
+    });
+
+    // Create D1 initial record
+    await d1Repo.createInitialRecord({
+      docId,
+      fileName,
+      r2Key,
+      tenantId: 'tenant_default',
+      userId: 'user_default',
+      version: 'v1'
+    });
+
+    // Mark as demo document
+    await c.env.DB.prepare('UPDATE document_records SET is_demo = 1 WHERE doc_id = ?').bind(docId).run();
+
+    // Process pipeline
+    const llm = new LLMProviderService(c.env.AI);
+    const pipeline = new DocumentPipeline(llm, c.env.DB, c.env.VECTORIZE, c.env.R2, c.env.AI);
+    
+    // Process text
+    await pipeline.processDocument(docId, fileName, bytes.buffer.slice(0) as ArrayBuffer);
+
+    return c.json({ success: true, docId, message: 'Đã nạp tài liệu mẫu dùng thử thành công!' });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Không thể nạp dữ liệu mẫu: ${errorMsg}` }, 500);
+  }
+});
 
 // 3. Document Records List Endpoint (Flow C §21)
 app.get('/api/documents', async (c) => {
