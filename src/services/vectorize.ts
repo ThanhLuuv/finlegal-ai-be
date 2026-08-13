@@ -15,6 +15,19 @@ export interface VectorMatchResult {
   };
 }
 
+function adjustVectorDimension(vector: number[], targetDim = 768): number[] {
+  if (!vector || vector.length === 0) return new Array(targetDim).fill(0);
+  if (vector.length === targetDim) return vector;
+
+  if (vector.length > targetDim) {
+    const sliced = vector.slice(0, targetDim);
+    const norm = Math.sqrt(sliced.reduce((sum, val) => sum + val * val, 0)) || 1;
+    return sliced.map(val => val / norm);
+  }
+
+  return [...vector, ...new Array(targetDim - vector.length).fill(0)];
+}
+
 export class VectorizeService {
   private vectorize: VectorizeIndex;
   private ai: Ai;
@@ -26,13 +39,13 @@ export class VectorizeService {
 
   /**
    * Generates a multilingual vector embedding for text using Workers AI.
-   * Prefers @cf/google/embeddinggemma-300m (768 dims) or @cf/baai/bge-m3 for Vietnamese support.
+   * Ensures output is exactly 768 dimensions for Cloudflare Vectorize.
    */
   public async generateEmbedding(text: string): Promise<number[]> {
     const models = [
+      '@cf/baai/bge-base-en-v1.5',
       '@cf/google/embeddinggemma-300m',
-      '@cf/baai/bge-m3',
-      '@cf/baai/bge-base-en-v1.5'
+      '@cf/baai/bge-m3'
     ];
 
     for (const modelName of models) {
@@ -41,7 +54,7 @@ export class VectorizeService {
           text: [text]
         });
         if (res && res.data && res.data[0]) {
-          return res.data[0];
+          return adjustVectorDimension(res.data[0], 768);
         }
       } catch (err) {
         console.warn(`Embedding model ${modelName} failed, trying next model...`);
@@ -76,7 +89,7 @@ export class VectorizeService {
           try {
             const res = await (this.ai as any).run(modelName, { text: batchTexts });
             if (res && res.data && Array.isArray(res.data)) {
-              return res.data;
+              return res.data.map((v: number[]) => adjustVectorDimension(v, 768));
             }
           } catch {
             // try next model

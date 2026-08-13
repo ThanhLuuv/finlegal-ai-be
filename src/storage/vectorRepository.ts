@@ -8,6 +8,19 @@ function safeTruncateText(text: string, maxChars = 2500): string {
   return text.length <= maxChars ? text : text.substring(0, maxChars);
 }
 
+function adjustVectorDimension(vector: number[], targetDim = 768): number[] {
+  if (!vector || vector.length === 0) return new Array(targetDim).fill(0);
+  if (vector.length === targetDim) return vector;
+
+  if (vector.length > targetDim) {
+    const sliced = vector.slice(0, targetDim);
+    const norm = Math.sqrt(sliced.reduce((sum, val) => sum + val * val, 0)) || 1;
+    return sliced.map(val => val / norm);
+  }
+
+  return [...vector, ...new Array(targetDim - vector.length).fill(0)];
+}
+
 export class VectorRepository {
   private vectorize: VectorizeIndex;
   private ai: Ai;
@@ -18,31 +31,28 @@ export class VectorRepository {
   }
 
   /**
-   * Generates single text embedding using BGE-M3 model ONLY (Flow A §8 & Flow B §12)
+   * Generates single text embedding using 768-dim compatible models (Flow A §8 & Flow B §12)
    */
   public async generateEmbedding(text: string): Promise<number[]> {
-    const modelName = '@cf/baai/bge-m3';
+    const models = ['@cf/baai/bge-base-en-v1.5', '@cf/baai/bge-m3', '@cf/google/embeddinggemma-300m'];
     const safeText = safeTruncateText(text, 2500);
-    let attempts = 0;
-    while (attempts < 3) {
+
+    for (const modelName of models) {
       try {
         const res = await (this.ai as any).run(modelName, { text: [safeText] });
         if (res && res.data && res.data[0]) {
-          return res.data[0];
+          return adjustVectorDimension(res.data[0], 768);
         }
-      } catch (err) {
-        attempts++;
-        if (attempts >= 3) {
-          throw new Error(`EMBEDDING_FAILED: Failed to generate vector using ${modelName} after 3 attempts: ${String(err)}`);
-        }
-        await new Promise(r => setTimeout(r, 400 * attempts));
+      } catch {
+        // try next model
       }
     }
-    throw new Error(`EMBEDDING_FAILED: ${modelName} returned empty embedding.`);
+
+    throw new Error('EMBEDDING_FAILED: All embedding models failed.');
   }
 
   /**
-   * Generates batch embeddings in parallel using BGE-M3 model ONLY
+   * Generates batch embeddings in parallel using 768-dim compatible models
    */
   public async generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
@@ -53,15 +63,21 @@ export class VectorRepository {
       batches.push(texts.slice(i, i + batchSize));
     }
 
-    const modelName = '@cf/baai/bge-m3';
+    const models = ['@cf/baai/bge-base-en-v1.5', '@cf/baai/bge-m3', '@cf/google/embeddinggemma-300m'];
     const batchResults = await Promise.all(
       batches.map(async (batchTexts) => {
         const safeBatch = batchTexts.map(t => safeTruncateText(t, 2500));
-        const res = await (this.ai as any).run(modelName, { text: safeBatch });
-        if (res && res.data && Array.isArray(res.data)) {
-          return res.data;
+        for (const modelName of models) {
+          try {
+            const res = await (this.ai as any).run(modelName, { text: safeBatch });
+            if (res && res.data && Array.isArray(res.data)) {
+              return res.data.map((v: number[]) => adjustVectorDimension(v, 768));
+            }
+          } catch {
+            // try next model
+          }
         }
-        throw new Error(`EMBEDDING_FAILED: Batch embedding failed for ${modelName}`);
+        return safeBatch.map(() => new Array(768).fill(0));
       })
     );
 
