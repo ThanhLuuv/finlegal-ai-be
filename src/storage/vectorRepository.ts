@@ -161,11 +161,19 @@ export class VectorRepository {
       if (tenantId && tenantId !== 'tenant_default') filterObj.tenantId = tenantId;
     }
 
-    const matches = await this.vectorize.query(queryVector, {
+    let matches = await this.vectorize.query(queryVector, {
       topK,
       filter: Object.keys(filterObj).length > 0 ? filterObj : undefined,
       returnMetadata: 'all'
     });
+
+    // Fallback: If filtered docId search yields 0 matches, search all vector indexes
+    if ((!matches || !matches.matches || matches.matches.length === 0) && Object.keys(filterObj).length > 0) {
+      matches = await this.vectorize.query(queryVector, {
+        topK,
+        returnMetadata: 'all'
+      });
+    }
 
     if (!matches || !matches.matches) return [];
 

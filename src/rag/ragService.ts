@@ -34,7 +34,24 @@ export class RagService {
     const query = await this.queryAnalyzer.analyze(userPrompt, selectedDocId, history, parsedScope);
 
     // 2. Vector Retrieval using BGE-M3 Embeddings on Vectorize Index (Top 20 candidate chunks)
-    const rawMatches = await this.vectorRetriever.retrieve(query, 20);
+    let rawMatches = await this.vectorRetriever.retrieve(query, 20);
+
+    // Fallback: If Vectorize returns 0 matches and a document is targeted, retrieve D1 chunks directly
+    if (rawMatches.length === 0 && selectedDocId && this.d1Repo) {
+      try {
+        const d1Chunks = await this.d1Repo.getAllChunks(selectedDocId);
+        if (d1Chunks.length > 0) {
+          rawMatches = d1Chunks.map(c => ({
+            chunkId: c.chunkId,
+            score: 0.85,
+            text: c.content,
+            metadata: c.metadata
+          }));
+        }
+      } catch (err) {
+        console.warn('D1 direct chunk retrieval notice:', err);
+      }
+    }
 
     // 3. Reciprocal Rank Fusion (RRF) Reranking (Select Top 5-8 candidate evidence blocks)
     const evidenceBlocks = this.reranker.rerank(rawMatches, query.keywords, 5);

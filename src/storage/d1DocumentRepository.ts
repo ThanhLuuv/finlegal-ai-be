@@ -268,6 +268,44 @@ export class D1DocumentRepository {
   }
 
   /**
+   * Fetches all chunks of a document directly from D1 SQLite as a reliable fallback
+   */
+  public async getAllChunks(docId: string): Promise<Array<{ chunkId: string; content: string; metadata: any }>> {
+    try {
+      const { results } = await this.db.prepare(
+        `SELECT id, content, page_start, page_end, chunk_index, metadata_json 
+         FROM document_chunks 
+         WHERE document_id = ? 
+         ORDER BY chunk_index ASC 
+         LIMIT 20`
+      ).bind(docId).all<any>();
+
+      if (!results || results.length === 0) return [];
+
+      return results.map((r: any) => {
+        let meta: any = {};
+        try { meta = JSON.parse(r.metadata_json || '{}'); } catch {}
+        return {
+          chunkId: r.id,
+          content: r.content,
+          metadata: {
+            docId,
+            fileName: meta.fileName || 'document.pdf',
+            pageStart: r.page_start || 1,
+            pageEnd: r.page_end || 1,
+            sectionTitle: meta.sectionTitle || 'Nội dung tài liệu',
+            sectionPath: meta.sectionPath || [],
+            chunkIndex: r.chunk_index || 0,
+            text: r.content
+          }
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Fetches all active documents (is_active = 1) for a given tenant/user scope
    */
   public async listActiveDocuments(userId = 'user_default', tenantId = 'tenant_default'): Promise<any[]> {
