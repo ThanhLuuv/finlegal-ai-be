@@ -196,7 +196,17 @@ BÊN MUA (BÊN B): CÔNG TY CỔ PHẦN CÔNG NGHỆ TOÀN CẦU (GLOBALTECH)
 ĐIỀU 4: ĐIỀU KHOẢN CHUNG
 Hợp đồng này được lập thành 04 bản có giá trị pháp lý như nhau, mỗi bên giữ 02 bản.`;
 
-    const pdfBuffer = generatePdfBufferFromText('Hợp đồng mua bán hàng hóa mẫu', sampleContractContent);
+    let pdfBuffer: ArrayBuffer | null = null;
+    try {
+      const res = await fetch('https://finlegal-ai.pages.dev/Hop_dong_mua_ban_hang_hoa_mau.pdf');
+      if (res.ok) {
+        pdfBuffer = await res.arrayBuffer();
+      }
+    } catch {}
+
+    if (!pdfBuffer || pdfBuffer.byteLength === 0) {
+      pdfBuffer = generatePdfBufferFromText('Hợp đồng mua bán hàng hóa mẫu', sampleContractContent);
+    }
 
     // Process pipeline (handles R2 storage & D1 initial record creation automatically)
     const llm = new LLMProviderService(c.env.AI);
@@ -296,6 +306,13 @@ app.delete('/api/documents/:docId', async (c) => {
   try {
     const docId = c.req.param('docId');
     const d1Repo = new D1DocumentRepository(c.env.DB);
+    const doc = await d1Repo.getDocumentRecord(docId);
+
+    // Prevent deletion of protected demo documents
+    if (doc && (Number((doc as any).is_demo) === 1 || docId.toLowerCase().includes('demo') || doc.file_name?.includes('Hop_dong_mua_ban'))) {
+      return c.json({ error: 'PROTECTED_DOCUMENT: Tài liệu mẫu hệ thống không thể xóa.' }, 400);
+    }
+
     const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
 
     // 1. Mark status = DELETING to prevent concurrent retrieval
@@ -312,8 +329,7 @@ app.delete('/api/documents/:docId', async (c) => {
       console.warn('Vectorize deletion warning (retrying allowed):', vecErr);
     }
 
-    // 3. Query document record from D1 to delete R2 storage file object (Idempotent)
-    const doc = await d1Repo.getDocumentRecord(docId);
+    // 3. Delete R2 storage file object if present (Idempotent)
     if (doc && doc.r2_key) {
       try {
         await c.env.R2.delete(doc.r2_key);
