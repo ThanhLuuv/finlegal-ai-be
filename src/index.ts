@@ -20,6 +20,7 @@ import { D1DocumentRepository } from './storage/d1DocumentRepository';
 import { AnswerAgent } from './agents/answerAgent';
 import { LangfuseLogger } from './utils/langfuse';
 import { RetrievalScope } from './rag/types';
+import { generatePdfBufferFromText, isValidPdfBuffer } from './utils/pdfGenerator';
 
 
 // Bindings Environment Interface for Workers
@@ -195,14 +196,13 @@ BÊN MUA (BÊN B): CÔNG TY CỔ PHẦN CÔNG NGHỆ TOÀN CẦU (GLOBALTECH)
 ĐIỀU 4: ĐIỀU KHOẢN CHUNG
 Hợp đồng này được lập thành 04 bản có giá trị pháp lý như nhau, mỗi bên giữ 02 bản.`;
 
-    const enc = new TextEncoder();
-    const bytes = enc.encode(sampleContractContent);
+    const pdfBuffer = generatePdfBufferFromText('Hợp đồng mua bán hàng hóa mẫu', sampleContractContent);
 
     // Process pipeline (handles R2 storage & D1 initial record creation automatically)
     const llm = new LLMProviderService(c.env.AI);
     const pipeline = new DocumentPipeline(llm, c.env.DB, c.env.VECTORIZE, c.env.R2, c.env.AI);
     
-    await pipeline.processDocument(docId, fileName, bytes.buffer.slice(0) as ArrayBuffer);
+    await pipeline.processDocument(docId, fileName, pdfBuffer);
 
     // Mark as demo document
     try {
@@ -262,18 +262,26 @@ app.get('/api/documents/:docId/view', async (c) => {
       return c.json({ error: 'File tài liệu không tồn tại trên R2 Storage.' }, 404);
     }
 
+    const arrayBuffer = await r2Object.arrayBuffer();
     const ext = (doc.file_name || '').split('.').pop()?.toLowerCase() || '';
+    const hasPdfMagic = isValidPdfBuffer(arrayBuffer);
+
     let contentType = 'application/octet-stream';
-    if (ext === 'pdf') contentType = 'application/pdf';
-    else if (ext === 'txt') contentType = 'text/plain; charset=utf-8';
-    else if (ext === 'csv') contentType = 'text/csv; charset=utf-8';
+    if (ext === 'pdf') {
+      contentType = hasPdfMagic ? 'application/pdf' : 'text/plain; charset=utf-8';
+    } else if (ext === 'txt') {
+      contentType = 'text/plain; charset=utf-8';
+    } else if (ext === 'csv') {
+      contentType = 'text/csv; charset=utf-8';
+    }
 
     const headers = new Headers();
     headers.set('Content-Type', contentType);
     headers.set('Content-Disposition', `inline; filename="${encodeURIComponent(doc.file_name)}"`);
+    headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Cache-Control', 'public, max-age=3600');
 
-    return new Response(r2Object.body, {
+    return new Response(arrayBuffer, {
       status: 200,
       headers
     });
