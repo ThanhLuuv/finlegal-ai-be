@@ -47,6 +47,7 @@ export class D1DocumentRepository {
       `ALTER TABLE document_records ADD COLUMN uploaded_by TEXT DEFAULT 'system'`,
       `ALTER TABLE document_sections ADD COLUMN tenant_id TEXT DEFAULT 'tenant_default'`,
       `ALTER TABLE document_chunks ADD COLUMN tenant_id TEXT DEFAULT 'tenant_default'`,
+      `ALTER TABLE document_chunks ADD COLUMN parent_chunk_id TEXT`,
       `ALTER TABLE document_chunks ADD COLUMN pipeline_version TEXT DEFAULT 'v1.0'`,
       `ALTER TABLE document_chunks ADD COLUMN parser_version TEXT DEFAULT 'v1.0'`,
       `ALTER TABLE document_chunks ADD COLUMN chunker_version TEXT DEFAULT 'v1.0'`,
@@ -206,13 +207,14 @@ export class D1DocumentRepository {
     for (const chunk of chunks) {
       await this.db.prepare(
         `INSERT OR REPLACE INTO document_chunks 
-         (id, document_id, tenant_id, section_id, chunk_index, chunk_type, content, token_count, content_hash, embedding_version, page_start, page_end, metadata_json, vector_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, document_id, tenant_id, section_id, parent_chunk_id, chunk_index, chunk_type, content, token_count, content_hash, embedding_version, page_start, page_end, metadata_json, vector_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         chunk.id,
         docId,
         chunk.tenantId || tenantId,
         chunk.sectionId || null,
+        chunk.parentChunkId || chunk.metadata.parentChunkId || null,
         chunk.metadata.chunkIndex,
         chunk.chunkType,
         chunk.content,

@@ -1,5 +1,6 @@
 // Enterprise PDF Text Extractor & Encoding Quality Assessor for RAG Pipeline
 import pdfParse from 'pdf-parse';
+import { PageTextQuality } from '../document/types';
 
 export interface TextQualityResult {
   isValid: boolean;
@@ -39,6 +40,54 @@ export interface TextQualityMetrics {
   singleCharTokenRatio: number;
   extractedChars: number;
   status: 'GOOD' | 'REPAIRABLE' | 'BAD';
+}
+
+export function assessPageTextQuality(pageText: string, pageNumber: number): PageTextQuality {
+  if (!pageText || pageText.trim().length < 15) {
+    return {
+      pageNumber,
+      printableRatio: 0,
+      replacementCharRatio: 0,
+      weirdSpacingRatio: 0,
+      singleCharacterTokenRatio: 0,
+      alphabeticRatio: 0,
+      textDensity: 0,
+      extractedCharacterCount: 0,
+      isValid: false,
+      score: 0,
+      reason: 'Page text is empty or too short (<15 chars)'
+    };
+  }
+
+  const rawLength = pageText.length;
+  const printableMatches = pageText.match(/[\x20-\x7E\u00A0-\u024F\u1EA0-\u1EF9]/g) || [];
+  const printableRatio = printableMatches.length / rawLength;
+
+  const replacementMatches = pageText.match(/[\uFFFD]/g) || [];
+  const replacementCharRatio = replacementMatches.length / rawLength;
+
+  const tokens = pageText.split(/\s+/).filter(t => t.length > 0);
+  const singleCharTokens = tokens.filter(t => t.length === 1 && /[a-zA-Zà-ỹ]/.test(t));
+  const singleCharacterTokenRatio = tokens.length > 0 ? singleCharTokens.length / tokens.length : 0;
+
+  const alphaMatches = pageText.match(/[a-zA-Zà-ỹ]/g) || [];
+  const alphabeticRatio = alphaMatches.length / rawLength;
+
+  const quality = assessTextQuality(pageText);
+
+  return {
+    pageNumber,
+    printableRatio,
+    replacementCharRatio,
+    weirdSpacingRatio: singleCharacterTokenRatio > 0.3 ? 0.8 : 0.1,
+    singleCharacterTokenRatio,
+    alphabeticRatio,
+    textDensity: rawLength / 1000,
+    extractedCharacterCount: rawLength,
+    isValid: quality.isValid,
+    score: quality.score,
+    reason: quality.reason
+  };
 }
 
 /**

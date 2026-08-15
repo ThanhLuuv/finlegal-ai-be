@@ -97,6 +97,20 @@ export interface PipelineMetadata {
   indexedAt?: string;
 }
 
+export interface PageTextQuality {
+  pageNumber: number;
+  printableRatio: number;
+  replacementCharRatio: number;
+  weirdSpacingRatio: number;
+  singleCharacterTokenRatio: number;
+  alphabeticRatio: number;
+  textDensity: number;
+  extractedCharacterCount: number;
+  isValid: boolean;
+  score: number;
+  reason?: string;
+}
+
 export interface ChunkMetadata {
   docId: string;
   tenantId?: string;
@@ -107,6 +121,8 @@ export interface ChunkMetadata {
   pageEnd?: number;
   sectionTitle?: string;
   sectionPath?: string[];
+  sectionId?: string;
+  parentChunkId?: string;
   chunkIndex: number;
   documentType: string;
   containsTable: boolean;
@@ -119,6 +135,7 @@ export interface RagChunk {
   documentId: string;
   tenantId?: string;
   sectionId?: string;
+  parentChunkId?: string;
   content: string;
   chunkType: BlockType;
   tokenCount: number;

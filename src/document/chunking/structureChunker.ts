@@ -43,49 +43,57 @@ export class StructureChunker {
       // Dynamic Context Header Prefix attached to metadata for embedding generation
       const headerPrefix = `Document: ${docName}\nSection: ${sectionPathStr}\nPage: ${section.pageStart || 1}\n`;
 
-      // If section is small enough, keep as single section chunk
-      if (sectionContent.length <= 1500) {
-        const embeddingText = `${headerPrefix}${sectionContent}`;
-        chunks.push({
-          id: `${doc.documentId}_chunk_${chunkIndex}`,
-          documentId: doc.documentId,
-          sectionId: section.id,
-          content: sectionContent,
-          chunkType: 'section',
-          tokenCount: Math.ceil(sectionContent.length / 4),
-          contentHash: generateHash(sectionContent),
-          embeddingVersion: 'v1',
+      // Parent Chunk ID for section hierarchy
+      const parentChunkId = `${doc.documentId}_parent_sec_${section.id}`;
+
+      // Create Parent Section Chunk (Large context for LLM Context Builder)
+      const parentEmbeddingText = `${headerPrefix}${sectionContent}`;
+      const parentChunk: RagChunk = {
+        id: parentChunkId,
+        documentId: doc.documentId,
+        sectionId: section.id,
+        parentChunkId: undefined,
+        content: sectionContent,
+        chunkType: 'section',
+        tokenCount: Math.ceil(sectionContent.length / 4),
+        contentHash: generateHash(sectionContent),
+        embeddingVersion: 'v1',
+        pageStart: section.pageStart || 1,
+        pageEnd: section.pageEnd || 1,
+        metadata: {
+          docId: doc.documentId,
+          fileName: docName,
           pageStart: section.pageStart || 1,
           pageEnd: section.pageEnd || 1,
-          metadata: {
-            docId: doc.documentId,
-            fileName: docName,
-            pageStart: section.pageStart || 1,
-            pageEnd: section.pageEnd || 1,
-            sectionTitle: secTitle,
-            sectionPath: section.sectionPath || [secTitle],
-            chunkIndex,
-            documentType: doc.metadata.documentType || 'generic',
-            containsTable: sectionContent.includes('|'),
-            text: sectionContent,
-            embeddingText
-          }
-        });
-        chunkIndex++;
-      } else {
-        // Sub-chunk long sections into ~1000 char blocks
+          sectionTitle: secTitle,
+          sectionPath: section.sectionPath || [secTitle],
+          sectionId: section.id,
+          parentChunkId: undefined,
+          chunkIndex,
+          documentType: doc.metadata.documentType || 'generic',
+          containsTable: sectionContent.includes('|'),
+          text: sectionContent,
+          embeddingText: parentEmbeddingText
+        }
+      };
+      chunks.push(parentChunk);
+      chunkIndex++;
+
+      // If section is large, create Child Chunks (Fine-grained for Dense Vector Search)
+      if (sectionContent.length > 1500) {
         const paragraphs = sectionContent.split(/\n\s*\n/);
         let currentChunkText = '';
 
-        const pushChunkText = (rawContent: string) => {
+        const pushChildChunk = (rawContent: string) => {
           const content = rawContent.trim();
           if (!content) return;
 
-          const embeddingText = `${headerPrefix}${content}`;
+          const childEmbeddingText = `${headerPrefix}${content}`;
           chunks.push({
-            id: `${doc.documentId}_chunk_${chunkIndex}`,
+            id: `${doc.documentId}_child_${chunkIndex}`,
             documentId: doc.documentId,
             sectionId: section.id,
+            parentChunkId: parentChunkId,
             content: content,
             chunkType: 'paragraph',
             tokenCount: Math.ceil(content.length / 4),
@@ -100,37 +108,28 @@ export class StructureChunker {
               pageEnd: section.pageEnd || 1,
               sectionTitle: secTitle,
               sectionPath: section.sectionPath || [secTitle],
+              sectionId: section.id,
+              parentChunkId: parentChunkId,
               chunkIndex,
               documentType: doc.metadata.documentType || 'generic',
               containsTable: content.includes('|'),
               text: content,
-              embeddingText
+              embeddingText: childEmbeddingText
             }
           });
           chunkIndex++;
         };
 
         for (const para of paragraphs) {
-          if ((currentChunkText + '\n\n' + para).length <= 1200) {
-            currentChunkText = currentChunkText ? `${currentChunkText}\n\n${para}` : para;
+          if ((currentChunkText + '\n\n' + para).length > 1200) {
+            pushChildChunk(currentChunkText);
+            currentChunkText = para;
           } else {
-            if (currentChunkText) {
-              pushChunkText(currentChunkText);
-              currentChunkText = para;
-            } else {
-              // Sliding window for giant single paragraph
-              let start = 0;
-              while (start < para.length) {
-                const subStr = para.substring(start, start + 1200);
-                pushChunkText(subStr);
-                start += 950;
-              }
-            }
+            currentChunkText = currentChunkText ? `${currentChunkText}\n\n${para}` : para;
           }
         }
-
-        if (currentChunkText) {
-          pushChunkText(currentChunkText);
+        if (currentChunkText.trim().length > 0) {
+          pushChildChunk(currentChunkText);
         }
       }
     }
