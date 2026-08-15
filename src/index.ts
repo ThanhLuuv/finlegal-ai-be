@@ -1,4 +1,4 @@
-// FinLegal AI Engine - Hono.js Engine on Cloudflare Workers
+// Lexifin Engine - Hono.js Engine on Cloudflare Workers
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -14,6 +14,7 @@ export interface Bindings {
   R2: R2Bucket;
   AI: Ai;
   INGESTION_QUEUE?: Queue;
+  DEEPSEEK_API_KEY?: string;
   GEMINI_API_KEY?: string;
   OPENAI_API_KEY?: string;
   LANGFUSE_PUBLIC_KEY?: string;
@@ -86,7 +87,7 @@ app.use('*', async (c, next) => {
 app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
-    service: 'FinLegal AI Workers Engine',
+    service: 'Lexifin Workers Engine',
     timestamp: new Date().toISOString()
   });
 });

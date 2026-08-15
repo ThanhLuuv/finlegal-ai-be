@@ -1,5 +1,5 @@
 -- ====================================================================
--- FinLegal AI Database Schema (Cloudflare D1 Serverless SQLite)
+-- Lexifin Database Schema (Cloudflare D1 Serverless SQLite)
 -- Production Ready Schema for RAG Document System
 -- ====================================================================
 

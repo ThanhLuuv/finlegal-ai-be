@@ -39,7 +39,7 @@ export class SupervisorRouter {
       }>([
         {
           role: 'system',
-          content: `You are FinLegal AI's Intelligent Supervisor Router. Analyze the user prompt semantically and classify intent into exactly one of four categories:
+          content: `You are Lexifin's Intelligent Supervisor Router. Analyze the user prompt semantically and classify intent into exactly one of four categories:
 1. "RAG_ONLY": Any questions about candidate CVs, contracts, legal clauses, terms, uploaded files, or document text.
 2. "SQL_ONLY": Questions purely about system database metrics, transactions, revenue, customer names, or sales database numbers.
 3. "HYBRID_AUDIT": Prompts asking to compare, audit, cross-check, or verify contract claims against sales database records.

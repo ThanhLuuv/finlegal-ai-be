@@ -14,6 +14,7 @@ export interface VerifiedCitationResult {
   citedEvidences: Citation[];
   formattedSources: FormattedSourceLocation[];
   hasInvalidCitations: boolean;
+  hasHallucinatedClaims: boolean;
   warnings: string[];
 }
 
@@ -48,7 +49,7 @@ export class CitationValidator {
   }
 
   /**
-   * Parses Evidence IDs like [E1], [E2] from generated answer text
+   * Validates evidence citations [E1], [E2] and verifies claim numbers/dates against evidence text
    */
   public static validateAndMapCitations(
     rawAnswer: string,
@@ -56,6 +57,7 @@ export class CitationValidator {
   ): VerifiedCitationResult {
     const warnings: string[] = [];
     const citedEvidences: Citation[] = [];
+    let hasHallucinatedClaims = false;
 
     const citationRegex = /\[E(\d+)\]/g;
     const matches = Array.from(rawAnswer.matchAll(citationRegex));
@@ -65,6 +67,19 @@ export class CitationValidator {
       const idx = parseInt(match[1], 10) - 1;
       if (idx >= 0 && idx < evidencePool.length) {
         citedIndices.add(idx);
+
+        // Verification: Check if numbers in the sentence surrounding [E1] exist in the evidence
+        const evidenceText = (evidencePool[idx].sectionTitle || '') + ' ' + (evidencePool[idx].documentName || '');
+        const matchIndex = match.index || 0;
+        const sentenceSnippet = rawAnswer.substring(Math.max(0, matchIndex - 120), matchIndex);
+        const numbersInClaim = sentenceSnippet.match(/\b\d+(?:[\.,]\d+)?\b/g) || [];
+
+        for (const num of numbersInClaim) {
+          if (num.length > 1 && !evidenceText.includes(num)) {
+            hasHallucinatedClaims = true;
+            warnings.push(`Cảnh báo: Con số '${num}' trong nhận định không tìm thấy trong tài liệu gốc [E${idx + 1}].`);
+          }
+        }
       } else {
         warnings.push(`Phát hiện mã trích dẫn không hợp lệ: [E${idx + 1}].`);
       }
@@ -85,6 +100,7 @@ export class CitationValidator {
       citedEvidences,
       formattedSources,
       hasInvalidCitations: warnings.length > 0,
+      hasHallucinatedClaims,
       warnings
     };
   }

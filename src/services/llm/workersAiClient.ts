@@ -33,14 +33,14 @@ export class WorkersAiClient {
       }
     }
 
-    // Recommended Workers AI Model Catalog (Qwen 2.5 > Llama 3.3/3.1 > Gemini)
+    // Recommended Workers AI Model Catalog (DeepSeek v4 > DeepSeek R1 > Qwen 2.5 > Llama 3.3)
     const models = [
+      '@cf/deepseek-ai/deepseek-v4-pro-0813',
+      '@cf/deepseek-ai/deepseek-v4-flash-0731',
+      '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
       '@cf/qwen/qwen2.5-coder-32b-instruct',
-      '@cf/qwen/qwen3-30b-a3b-fp8',
       '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-      '@cf/meta/llama-3.1-8b-instruct',
-      'google/gemini-2.5-flash',
-      '@cf/mistral/mistral-7b-instruct-v0.1'
+      '@cf/meta/llama-3.1-8b-instruct'
     ];
 
     for (const modelName of models) {

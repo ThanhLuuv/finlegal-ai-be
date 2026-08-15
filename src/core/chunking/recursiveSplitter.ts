@@ -29,6 +29,15 @@ export interface SplitterOptions {
   separators?: string[];
 }
 
+function computeSimpleHash(text: string): string {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16).padStart(8, '0');
+}
+
 export class RecursiveCharacterTextSplitter {
   private chunkSizeChars: number;
   private chunkOverlapChars: number;
@@ -53,10 +62,7 @@ export class RecursiveCharacterTextSplitter {
   }
 
   /**
-   * Structure-First Chunking Pipeline
-   * Step 1: Split document into natural structural sections (# Header, ## Section, Tables)
-   * Step 2: Preserve sections <= 500 tokens intact
-   * Step 3: Recursively split sections > 500 tokens
+   * Structure-First Chunking Pipeline with Content-Hash Deterministic Chunk IDs & Table Header Preservation
    */
   public splitText(
     fullText: string,
@@ -75,9 +81,27 @@ export class RecursiveCharacterTextSplitter {
       if (block.length <= this.chunkSizeChars) {
         finalBlocks.push(block);
       } else {
+        // If large table, preserve table header row across sub-slices
+        const isTable = block.includes('|') && block.split('\n').some(l => l.trim().startsWith('|'));
+        let tableHeader = '';
+        if (isTable) {
+          const lines = block.split('\n').filter(l => l.trim().length > 0);
+          if (lines.length >= 2 && lines[0].includes('|') && lines[1].includes('|')) {
+            tableHeader = lines[0] + '\n' + lines[1] + '\n';
+          }
+        }
+
         const subSegments = this.splitRecursive(block, this.separators);
         const mergedSubs = this.mergeSegmentsWithOverlap(subSegments);
-        finalBlocks.push(...mergedSubs);
+
+        const firstHeaderLine = tableHeader.split('\n')[0] || '';
+        for (const sub of mergedSubs) {
+          if (tableHeader && firstHeaderLine && !sub.startsWith(firstHeaderLine)) {
+            finalBlocks.push(tableHeader + sub);
+          } else {
+            finalBlocks.push(sub);
+          }
+        }
       }
     }
 
@@ -100,7 +124,10 @@ export class RecursiveCharacterTextSplitter {
 
       const containsTable = content.includes('|') && content.split('\n').some(line => line.trim().startsWith('|'));
       const tokenCount = this.estimateTokens(content);
-      const chunkId = `${docId}_v1_chunk_${i}`;
+
+      // Deterministic Content-Hash Chunk ID for Idempotency
+      const contentHash = computeSimpleHash(content);
+      const chunkId = `${docId}_v1_c${i}_${contentHash}`;
 
       chunks.push({
         id: chunkId,

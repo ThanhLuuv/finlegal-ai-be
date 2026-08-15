@@ -42,6 +42,10 @@ chatRoutes.post('/stream', async (c) => {
     return c.json({ error: 'INVALID_INPUT: sessionId must be a string if provided' }, 400);
   }
 
+  // Server-Side Tenant Resolution (Security Boundary: Never trust client payload tenantId)
+  const tenantId = c.req.header('x-tenant-id') || 'tenant_default';
+  const userId = c.req.header('x-user-id') || 'user_default';
+
   const prompt = body.prompt;
   const docId = body.docId;
   const sessionId = body.sessionId || crypto.randomUUID();
@@ -75,7 +79,8 @@ chatRoutes.post('/stream', async (c) => {
   }
 
   // Initialize Core Services & Pipeline Components
-  const llm = new LLMProviderService(c.env.AI, c.env.OPENAI_API_KEY);
+  const apiKey = c.env.DEEPSEEK_API_KEY || c.env.GEMINI_API_KEY || c.env.OPENAI_API_KEY;
+  const llm = new LLMProviderService(c.env.AI, apiKey);
   const d1Service = new D1DatabaseService(c.env.DB);
   const d1Repo = new D1DocumentRepository(c.env.DB);
   const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
@@ -145,13 +150,14 @@ chatRoutes.post('/stream', async (c) => {
         // 1. Hybrid Retrieval (Vectorize Top 25 + D1 Sparse) -> RRF Merge
         const candidates = await hybridRetriever.retrieveCandidates(prompt, keywords, docId, 25, 20);
 
-        // 2. BGE Reranker -> Select Top 3-5 candidates
-        topEvidenceBlocks = await reranker.rerank(prompt, candidates, 5);
+        // 2. BGE Reranker -> Select Dynamic Top-K candidates (Top 4-10)
+        const dynamicTopK = hybridRetriever.determineDynamicTopK(prompt);
+        topEvidenceBlocks = await reranker.rerank(prompt, candidates, dynamicTopK);
 
         state.thoughtProcess.push({
           agent: 'RAG_AGENT',
           status: 'DONE',
-          thought: `Đã dung hợp và Rerank được ${topEvidenceBlocks.length} đoạn trích dẫn chất lượng cao nhất (Top 3-5).`,
+          thought: `Đã dung hợp và Rerank được ${topEvidenceBlocks.length} đoạn trích dẫn chất lượng cao nhất (Dynamic Top-${dynamicTopK}).`,
           timestamp: Date.now()
         });
         await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
@@ -172,7 +178,7 @@ chatRoutes.post('/stream', async (c) => {
         const generalReply = await llm.generateText([
           {
             role: 'system',
-            content: 'Bạn là Trợ lý AI FinLegal AI chuyên phân tích Hợp đồng và Đối soát Số liệu Bán hàng Doanh nghiệp. Bạn BẮT BUỘC phải trả lời bằng Tiếng Việt 100%, lịch sự, chuyên nghiệp và ngắn gọn.'
+            content: 'Bạn là Trợ lý AI Lexifin chuyên phân tích Hợp đồng và Đối soát Số liệu Bán hàng Doanh nghiệp. Bạn BẮT BUỘC phải trả lời bằng Tiếng Việt 100%, lịch sự, chuyên nghiệp và ngắn gọn.'
           },
           { role: 'user', content: prompt }
         ]);

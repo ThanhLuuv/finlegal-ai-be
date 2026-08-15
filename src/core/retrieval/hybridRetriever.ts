@@ -1,4 +1,4 @@
-// Stage 2 Hybrid Retrieval Engine (Dense Search + Sparse Keyword Search -> RRF Merge & Deduplicate)
+// Stage 2 Hybrid Retrieval Engine (Dense Search + Sparse Keyword Search -> RRF Merge & Dynamic Top-K)
 
 import { VectorRepository } from '../../storage/vectorRepository';
 import { D1DocumentRepository } from '../../storage/d1DocumentRepository';
@@ -21,6 +21,26 @@ export class HybridRetriever {
   constructor(vectorRepo: VectorRepository, d1Repo: D1DocumentRepository) {
     this.vectorRepo = vectorRepo;
     this.d1Repo = d1Repo;
+  }
+
+  /**
+   * Calculates dynamic Top-K for reranking based on query intent & complexity
+   * Simple factual query -> Top 4
+   * Multi-part compliance / summary query -> Top 8-10
+   */
+  public determineDynamicTopK(queryText: string): number {
+    const text = (queryText || '').toLowerCase();
+    const isMultiPartOrSummary = 
+      text.includes('tổng hợp') || 
+      text.includes('tất cả') || 
+      text.includes('danh sách') || 
+      text.includes('nghĩa vụ') || 
+      text.includes('điều khoản') || 
+      text.includes('bảng') ||
+      text.includes('summary') || 
+      text.includes('list all');
+
+    return isMultiPartOrSummary ? 8 : 4;
   }
 
   /**

@@ -1,6 +1,7 @@
 // Unified LLM Provider Orchestrator
 
 import { LLMMessage, LLMOptions } from './types';
+import { DeepSeekClient } from './deepseekClient';
 import { GeminiClient } from './geminiClient';
 import { WorkersAiClient } from './workersAiClient';
 
@@ -9,38 +10,40 @@ export * from './types';
 export class LLMProviderService {
   private ai: Ai;
   private apiKey?: string;
+  private deepseekClient: DeepSeekClient;
   private geminiClient: GeminiClient;
   private workersAiClient: WorkersAiClient;
 
   constructor(ai: Ai, apiKey?: string) {
     this.ai = ai;
     this.apiKey = apiKey;
+    this.deepseekClient = new DeepSeekClient(apiKey);
     this.geminiClient = new GeminiClient(apiKey);
     this.workersAiClient = new WorkersAiClient(ai);
   }
 
   /**
-   * Generates text completion with Multi-Tier Fallback Strategy
+   * Generates text completion with DeepSeek API First & Workers AI Fallback Strategy
    */
   public async generateText(messages: LLMMessage[], options: LLMOptions = {}): Promise<string> {
     const temperature = options.temperature ?? 0.1;
     const maxTokens = options.max_tokens ?? 2048;
 
-    // 1. Direct Gemini API (if API Key configured)
+    // 1. Direct DeepSeek API (deepseek-v4-flash)
     if (this.apiKey) {
       try {
-        const res = await this.geminiClient.generateContent(messages, temperature);
+        const res = await this.deepseekClient.generateContent(messages, temperature, maxTokens);
         if (res && res.trim().length > 0) return res.trim();
       } catch (err) {
-        console.warn('Gemini API call notice:', err);
+        console.warn('DeepSeek API call notice:', err);
       }
     }
 
-    // 2. Workers AI Edge Models
+    // 2. Cloudflare Workers AI Edge Models (@cf/deepseek-ai/deepseek-v4-pro-0813, @cf/deepseek-ai/deepseek-v4-flash-0731)
     const workersRes = await this.workersAiClient.generateText(messages, temperature, maxTokens, options.modelOverride);
     if (workersRes) return workersRes.trim();
 
-    throw new Error('LLM Generation Failure: All AI models and API fallbacks were unavailable.');
+    throw new Error('LLM Generation Failure: All DeepSeek AI models and API fallbacks were unavailable.');
   }
 
   /**

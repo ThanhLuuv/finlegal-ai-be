@@ -23,7 +23,7 @@ export class GroundedSynthesizer {
   ): Promise<GroundedSynthesisResult> {
     if (!evidenceBlocks || evidenceBlocks.length === 0) {
       return {
-        answer: `⚠️ **Thông báo FinLegal AI**: Không tìm thấy đoạn trích dẫn phù hợp trong tài liệu để trả lời câu hỏi của bạn. Vui lòng kiểm tra lại câu hỏi hoặc chọn đúng tập tin văn bản!`,
+        answer: `⚠️ **Thông báo Lexifin**: Không tìm thấy đoạn trích dẫn phù hợp trong tài liệu để trả lời câu hỏi của bạn. Vui lòng kiểm tra lại câu hỏi hoặc chọn đúng tập tin văn bản!`,
         citations: []
       };
     }
@@ -41,7 +41,7 @@ export class GroundedSynthesizer {
       ? JSON.stringify(sqlData, null, 2)
       : 'Không có dữ liệu SQL D1.';
 
-    const systemPrompt = `You are FinLegal AI's Senior Evidence Synthesizer & Compliance Auditor.
+    const systemPrompt = `You are Lexifin's Senior Evidence Synthesizer & Compliance Auditor.
 GROUNDING & CITATION GUARDRAIL RULES:
 1. Respond 100% in Vietnamese, professionally, accurately, and neatly in Markdown.
 2. Synthesize answer EXCLUSIVELY based on the provided Evidence Blocks [E1], [E2]... inside <document_evidence> and SQL Data.
