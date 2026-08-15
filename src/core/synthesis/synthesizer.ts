@@ -50,10 +50,13 @@ GROUNDING & CITATION GUARDRAIL RULES:
 
     const userMsg = `CÂU HỎI NGƯỜI DÙNG:\n${userPrompt}\n\n<document_evidence>\n${formattedBlocks}\n</document_evidence>\n\nSQL D1 DATA:\n${sqlStr}`;
 
-    const rawAnswer = await this.llm.generateText([
+    let rawAnswer = await this.llm.generateText([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMsg }
     ], { task: 'MAIN_ANSWER' });
+
+    // Clean DeepSeek <think> reasoning tags from final public answer text
+    rawAnswer = rawAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
     // Validate citations post-LLM via CitationValidator
     const rawCitations: Citation[] = evidenceBlocks.map((b) => {
