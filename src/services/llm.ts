@@ -48,7 +48,7 @@ function extractLLMResponseText(res: any): string | null {
   return null;
 }
 
-import { stripPDFSyntaxNoise, isPDFSyntaxChunk } from '../utils/pdfExtractor';
+import { stripPDFSyntaxNoise, isPDFSyntaxChunk, extractEmbeddedImagesFromPDF } from '../utils/pdfExtractor';
 
 export class LLMProviderService {
   private ai: Ai;
@@ -113,16 +113,26 @@ export class LLMProviderService {
 
     // 2. Secondary Engine: Try Direct Google Gemini REST API or OpenAI / AgentRouter Multimodal Vision API if API Key is available
     if (this.openaiApiKey) {
-      // 2a. Direct Google Gemini REST API (Supports Gemini Keys AQ.Ab... or AIzaSy...)
+      const isApiKeyFormat = this.openaiApiKey.startsWith('AIza');
+
+      // 2a. Direct Google Gemini REST API (Supports Gemini Keys AIza... or Bearer token AQ.Ab...)
       try {
         const geminiModels = ['gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-1.5-pro'];
         for (const gModel of geminiModels) {
           try {
-            console.log(`[Direct Gemini Vision API] Calling ${gModel} with Gemini API Key...`);
-            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${this.openaiApiKey}`;
+            console.log(`[Direct Gemini Vision API] Calling ${gModel} with Gemini Token...`);
+            const geminiUrl = isApiKeyFormat
+              ? `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${this.openaiApiKey}`
+              : `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent`;
+
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (!isApiKeyFormat) {
+              headers['Authorization'] = `Bearer ${this.openaiApiKey}`;
+            }
+
             const res = await fetch(geminiUrl, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers,
               body: JSON.stringify({
                 contents: [
                   {
@@ -160,9 +170,11 @@ export class LLMProviderService {
         console.warn('Direct Gemini API fallback notice:', geminiFetchErr);
       }
 
-      // 2b. AgentRouter / OpenAI API
+      // 2b. AgentRouter / OpenAI API - Extract embedded JPEG image data URL for Vision Models
       try {
-        const dataUrl = `data:application/pdf;base64,${base64Str}`;
+        const embeddedImages = extractEmbeddedImagesFromPDF(pdfBuffer);
+        const imageUrls = embeddedImages.length > 0 ? embeddedImages : [`data:image/jpeg;base64,${base64Str}`];
+
         const endpoints = [
           'https://agentrouter.org/v1/chat/completions',
           'https://api.openai.com/v1/chat/completions'
@@ -173,6 +185,13 @@ export class LLMProviderService {
           for (const modelName of visionModels) {
             try {
               console.log(`[Multimodal Vision API] Calling ${modelName} at ${endpoint}...`);
+              const userContentParts: any[] = [
+                { type: 'text', text: `Please extract all readable text from scanned document file: ${fileName}` }
+              ];
+              for (const imgUrl of imageUrls) {
+                userContentParts.push({ type: 'image_url', image_url: { url: imgUrl } });
+              }
+
               const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
@@ -184,14 +203,11 @@ export class LLMProviderService {
                   messages: [
                     {
                       role: 'system',
-                      content: 'You are an expert AI Document OCR & Vision Transcriber. Extract ALL text, candidate names, contact information, work history, education, skills, dates, and tables from the attached PDF document. Return ONLY pristine Markdown formatted text. Preserve all facts accurately.'
+                      content: 'You are an expert AI Document OCR & Vision Transcriber. Extract ALL text, candidate names, contact information, work history, education, skills, dates, and tables from the attached document images. Return ONLY pristine Markdown formatted text. Preserve all facts accurately.'
                     },
                     {
                       role: 'user',
-                      content: [
-                        { type: 'text', text: `Please extract all readable text from file: ${fileName}` },
-                        { type: 'image_url', image_url: { url: dataUrl } }
-                      ]
+                      content: userContentParts
                     }
                   ],
                   temperature: 0.1

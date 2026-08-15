@@ -22,6 +22,16 @@ export function cleanPrintableText(text: string): string {
     .trim();
 }
 
+export function arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 export interface TextQualityMetrics {
   printableRatio: number;
   replacementCharRatio: number;
@@ -438,4 +448,42 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
   }
 
   return '';
+}
+
+/**
+ * Extracts embedded JPEG images from a scanned PDF buffer.
+ */
+export function extractEmbeddedImagesFromPDF(buffer: ArrayBuffer): string[] {
+  const bytes = new Uint8Array(buffer);
+  const images: string[] = [];
+  let i = 0;
+  
+  while (i < bytes.length - 3 && images.length < 5) {
+    // Check for JPEG SOI marker: 0xFF 0xD8 0xFF
+    if (bytes[i] === 0xFF && bytes[i + 1] === 0xD8 && bytes[i + 2] === 0xFF) {
+      const start = i;
+      let j = i + 2;
+      let end = -1;
+      
+      // Find JPEG EOI marker: 0xFF 0xD9
+      while (j < bytes.length - 1) {
+        if (bytes[j] === 0xFF && bytes[j + 1] === 0xD9) {
+          end = j + 2;
+          break;
+        }
+        j++;
+      }
+      
+      if (end > start && (end - start) > 2000) { // Only images > 2KB
+        const imgBytes = bytes.subarray(start, end);
+        const b64 = arrayBufferToBase64(imgBytes);
+        images.push(`data:image/jpeg;base64,${b64}`);
+        i = end;
+        continue;
+      }
+    }
+    i++;
+  }
+  
+  return images;
 }
