@@ -1,10 +1,9 @@
-// Zero-Hallucination Answer Synthesizer Agent with Structured Citations
+// Zero-Hallucination Answer Synthesizer Agent with Structured Citations & Multi-Section Evidence Merging
 
 import { BaseAgent } from './base';
 import { AgentRole, MultiAgentState } from './state';
 import { LLMProviderService } from '../services/llm';
 import { RetrievalResult } from '../rag/types';
-
 import { CitationValidator } from '../rag/citationValidator';
 
 export class AnswerAgent extends BaseAgent {
@@ -26,12 +25,22 @@ export class AnswerAgent extends BaseAgent {
     const sqlData = state.sqlResult || state.sqlData;
     const sqlStr = sqlData && Array.isArray(sqlData) && sqlData.length > 0 ? JSON.stringify(sqlData, null, 2) : 'Không có dữ liệu SQL D1.';
 
+    console.log('4 FINAL LLM CONTEXT:\n', contextStr.slice(0, 2000));
+
     const systemPrompt = `You are FinLegal AI's Senior Evidence Synthesizer & Auditor.
 You MUST follow these GROUNDING & CITATION GUARDRAIL RULES:
-1. Respond 100% in Vietnamese, professionally, accurately, and concisely.
+1. Respond 100% in Vietnamese, professionally, accurately, thoroughly, and neatly in Markdown format.
 2. GROUNDING GUARDRAIL: Synthesize your answer EXCLUSIVELY based on the provided Evidence Blocks [E1], [E2]... and SQL Data.
-3. STRICT EVIDENCE ID CITATION RULE: Every claim or clause mentioned MUST be directly cited using the exact Evidence ID tag (e.g., "[E1]", "[E2]"). Do NOT invent or spell out arbitrary file names or page numbers in prose — strictly use the [E1], [E2] tags provided in the evidence context.
-4. INSUFFICIENT EVIDENCE RULE: If the evidence blocks do not contain sufficient information to directly answer the question, explicitly inform the user that the retrieved documents do not contain the answer, instead of fabricating information.`;
+3. CRITICAL EVIDENCE INSPECTION RULE: Read ALL provided evidence blocks [E1], [E2], ... before forming your response. Do NOT conclude that any section or information (such as Work Experience / Kinh nghiệm làm việc, Education / Học vấn, Selected Projects / Dự án tiêu biểu, Core Skills / Kỹ năng, Profile / Thông tin cá nhân) is missing until EVERY provided evidence block has been thoroughly inspected.
+4. SECTION MERGING RULE: Evidence blocks contain information extracted across pages/sections. Systematically merge and reassemble information under appropriate headers.
+5. DOCUMENT REVIEW & CANDIDATE PROFILE RULE: For document reviews or candidate overviews, systematically organize and summarize:
+   - Thông tin cá nhân & Liên hệ (Tên ứng viên, Email, SĐT, Địa chỉ, Profile)
+   - Kỹ năng cốt lõi (Core Skills)
+   - Kinh nghiệm làm việc (Work Experience - vị trí, thời gian, công ty, mô tả công việc)
+   - Dự án tiêu biểu (Selected Projects - tên dự án, công nghệ, vai trò)
+   - Học vấn & Ngoại ngữ (Education & Language)
+6. INSUFFICIENT EVIDENCE RULE: Only state that information is "không được cung cấp" or "missing" if it does NOT appear in ANY of the provided evidence blocks [E1]...[E8].
+7. STRICT EVIDENCE ID CITATION RULE: Every claim or section mentioned MUST be directly cited using the exact Evidence ID tag (e.g., "[E1]", "[E2]").`;
 
     const userPrompt = `USER PROMPT:\n${state.userPrompt}\n\nRETRIEVED EVIDENCE BLOCKS:\n${contextStr}\n\nSQL D1 DATA:\n${sqlStr}`;
 
@@ -61,8 +70,6 @@ You MUST follow these GROUNDING & CITATION GUARDRAIL RULES:
     state.finalAnswer = validationRes.answer;
     return validationRes.answer;
   }
-
-
 
   public async execute(state: MultiAgentState): Promise<MultiAgentState> {
     await this.generateAnswer(state);

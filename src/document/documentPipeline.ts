@@ -84,10 +84,14 @@ export class DocumentPipeline {
         
         const parsedDoc = validation.validatedDocument;
 
+        console.log('1 RAW TEXT:\n', rawExtractedDoc.text.slice(0, 500));
+
         // Step 3: Transition to CHUNKING status (Structure Analyzer & Chunker)
         await this.d1Repo.updateStatus(docId, 'CHUNKING', { totalPages: parsedDoc.metadata.pageCount, retryCount });
 
         const chunks: RagChunk[] = this.structureChunker.chunk(parsedDoc);
+
+        console.log('2 CHUNKS:\n', chunks.map((x, i) => `===== CHUNK ${i} (${x.metadata.sectionTitle}) =====\n${x.content.slice(0, 150)}...`).join('\n'));
 
         // Step 4: Transition to EMBEDDING status (BGE-M3 Embedding Model)
         await this.d1Repo.updateStatus(docId, 'EMBEDDING', { 

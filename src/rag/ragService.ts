@@ -30,13 +30,49 @@ export class RagService {
     const selectedDocId = typeof scope === 'string' ? scope : scope?.documentIds?.[0];
     const parsedScope: RetrievalScope | undefined = typeof scope === 'object' ? scope : (selectedDocId ? { tenantId: 'tenant_default', documentIds: [selectedDocId] } : undefined);
 
-    // 1. Query Analysis & Conversation Contextualization (Flow B §10-11)
+    // 1. Query Analysis & Conversation Contextualization
     const query = await this.queryAnalyzer.analyze(userPrompt, selectedDocId, history, parsedScope);
 
-    // 2. Vector Retrieval using BGE-M3 Embeddings on Vectorize Index (Top 20 candidate chunks)
+    // Intent Routing: Check if query asks for full document summary/review or if a specific single document is selected
+    const isFullDocQuery = /tóm tắt|đọc toàn bộ|nội dung file|nội dung tài liệu|phân tích|liệt kê tất cả|review|tổng quan|thông tin gì|cv này|ứng viên|hồ sơ/i.test(userPrompt);
+
+    // FULL DOCUMENT / DIRECT INJECTION MODE:
+    // If a target document is selected AND (full doc query OR small document <= 30 chunks), load ALL chunks sequentially directly from D1 Database
+    if (selectedDocId && this.d1Repo) {
+      try {
+        const d1Chunks = await this.d1Repo.getAllChunks(selectedDocId);
+        if (d1Chunks.length > 0 && (isFullDocQuery || d1Chunks.length <= 30)) {
+          const evidenceBlocks = d1Chunks.map((c, idx) => ({
+            chunkId: c.chunkId,
+            documentId: selectedDocId,
+            content: c.content,
+            score: 1.0,
+            vectorScore: 1.0,
+            lexicalScore: 1.0,
+            rrfScore: 1.0,
+            citation: {
+              documentId: selectedDocId,
+              documentName: c.metadata?.fileName || 'Tài liệu',
+              sectionTitle: c.metadata?.sectionTitle || 'Nội dung',
+              sectionPath: c.metadata?.sectionPath || [c.metadata?.sectionTitle || 'Nội dung'],
+              pageStart: c.metadata?.pageStart || 1,
+              pageEnd: c.metadata?.pageEnd || 1,
+              chunkId: c.chunkId
+            }
+          }));
+
+          console.log(`[3 RETRIEVED - FULL DOCUMENT MODE] Loaded ALL ${evidenceBlocks.length} sequential chunks for doc: ${selectedDocId}`);
+          return this.contextBuilder.buildContext(query, evidenceBlocks);
+        }
+      } catch (err) {
+        console.warn('[RagService] Full Document retrieval fallback notice:', err);
+      }
+    }
+
+    // 2. SEMANTIC SEARCH MODE: Vector Retrieval using BGE-M3 Embeddings on Vectorize Index
     let rawMatches = await this.vectorRetriever.retrieve(query, 20);
 
-    // Fallback: If Vectorize returns 0 matches and a document is targeted, retrieve D1 chunks directly
+    // Fallback if Vectorize returns 0 matches
     if (rawMatches.length === 0 && selectedDocId && this.d1Repo) {
       try {
         const d1Chunks = await this.d1Repo.getAllChunks(selectedDocId);
@@ -53,8 +89,10 @@ export class RagService {
       }
     }
 
-    // 3. Reciprocal Rank Fusion (RRF) Reranking (Select Top 8 candidate evidence blocks)
-    const evidenceBlocks = this.reranker.rerank(rawMatches, query.keywords, 8);
+    // 3. Reciprocal Rank Fusion (RRF) Reranking
+    const evidenceBlocks = this.reranker.rerank(rawMatches, query.keywords, 12);
+
+    console.log(`[3 RETRIEVED - SEMANTIC MODE] Retrieved ${evidenceBlocks.length} top candidate chunks.`);
 
     // 4. Structural Parent Section & Neighbor Expansion + Top Header Guarantee from D1 Database
     if (this.d1Repo && selectedDocId && evidenceBlocks.length > 0) {
@@ -97,7 +135,6 @@ export class RagService {
             const docId = match.metadata.docId;
             const sectionTitle = match.metadata.sectionTitle;
 
-            // First try fetching parent section content from D1
             if (sectionTitle) {
               const secContent = await this.d1Repo.getSectionContent(docId, sectionTitle);
               if (secContent && secContent.length > block.content.length && secContent.length < 3000) {
@@ -106,7 +143,6 @@ export class RagService {
               }
             }
 
-            // Fallback to neighbor chunks
             const neighbors = await this.d1Repo.getNeighborChunks(docId, chunkIndex);
             if (neighbors && neighbors.length > 1) {
               block.content = neighbors.map(n => n.content).join('\n---\n');
@@ -118,9 +154,7 @@ export class RagService {
       }
     }
 
-    // 5. Evidence Context Assembly & Evidence ID Formatting (Flow B §15)
+    // 5. Evidence Context Assembly & Evidence ID Formatting
     return this.contextBuilder.buildContext(query, evidenceBlocks);
   }
 }
-
-
