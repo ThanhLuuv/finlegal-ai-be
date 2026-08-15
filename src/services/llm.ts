@@ -111,8 +111,56 @@ export class LLMProviderService {
       }
     }
 
-    // 2. Secondary Engine: Try OpenAI / AgentRouter Multimodal Vision API if API Key is available
+    // 2. Secondary Engine: Try Direct Google Gemini REST API or OpenAI / AgentRouter Multimodal Vision API if API Key is available
     if (this.openaiApiKey) {
+      // 2a. Direct Google Gemini REST API (Supports Gemini Keys AQ.Ab... or AIzaSy...)
+      try {
+        const geminiModels = ['gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-1.5-pro'];
+        for (const gModel of geminiModels) {
+          try {
+            console.log(`[Direct Gemini Vision API] Calling ${gModel} with Gemini API Key...`);
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${this.openaiApiKey}`;
+            const res = await fetch(geminiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [
+                  {
+                    role: 'user',
+                    parts: [
+                      {
+                        inlineData: {
+                          mimeType: 'application/pdf',
+                          data: base64Str
+                        }
+                      },
+                      {
+                        text: 'You are an expert AI Document OCR & Structure Extractor. Extract ALL text, candidate names, contact information, work history, education, skills, dates, and tables from the attached document into pristine Markdown format.'
+                      }
+                    ]
+                  }
+                ],
+                generationConfig: { temperature: 0.1 }
+              })
+            });
+
+            if (res.ok) {
+              const data = await res.json() as any;
+              const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text && text.trim().length > 20) {
+                console.log(`[Direct Gemini Vision API Success] Model ${gModel} extracted ${text.length} chars.`);
+                return text.trim();
+              }
+            }
+          } catch (gErr) {
+            console.warn(`Direct Gemini model ${gModel} notice:`, gErr);
+          }
+        }
+      } catch (geminiFetchErr) {
+        console.warn('Direct Gemini API fallback notice:', geminiFetchErr);
+      }
+
+      // 2b. AgentRouter / OpenAI API
       try {
         const dataUrl = `data:application/pdf;base64,${base64Str}`;
         const endpoints = [
@@ -275,6 +323,19 @@ QUY TẮC BẮT BUỘC:
       }
     }
 
+    // 1. Primary Engine: If AgentRouter / OpenAI API key is configured, use it first
+    if (this.openaiApiKey) {
+      try {
+        console.log(`[LLM Executing] Task: ${task} -> Calling AgentRouter API...`);
+        const agentRouterResult = await this.callOpenAIAPI(messages, temperature);
+        if (agentRouterResult && agentRouterResult.trim().length > 0) {
+          return agentRouterResult.trim();
+        }
+      } catch (agentRouterErr) {
+        console.warn('[LLM Notice] AgentRouter API notice:', agentRouterErr);
+      }
+    }
+
     // Active Workers AI valid model catalog mapping
     const models = [
       'google/gemini-2.5-flash',
@@ -299,15 +360,6 @@ QUY TẮC BẮT BUỘC:
         }
       } catch (err) {
         console.warn(`[LLM Notice] Workers AI model ${modelName} notice:`, String(err));
-      }
-    }
-
-    // 2. Fallback to AgentRouter / External API if configured
-    if (this.openaiApiKey) {
-      try {
-        return await this.callOpenAIAPI(messages, temperature);
-      } catch (openaiErr) {
-        console.warn('AgentRouter API call notice:', openaiErr);
       }
     }
 
@@ -364,11 +416,43 @@ QUY TẮC BẮT BUỘC:
   }
 
   private async callOpenAIAPI(messages: LLMMessage[], temperature: number): Promise<string> {
+    // 1. Direct Google Gemini REST API (Supports Gemini API Keys AQ.Ab... / AIzaSy...)
+    if (this.openaiApiKey) {
+      const geminiModels = ['gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-1.5-pro'];
+      const promptText = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n');
+
+      for (const gModel of geminiModels) {
+        try {
+          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${this.openaiApiKey}`;
+          const res = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: promptText }] }],
+              generationConfig: { temperature }
+            })
+          });
+
+          if (res.ok) {
+            const data = await res.json() as any;
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (text && text.trim().length > 0) {
+              console.log(`[Direct Gemini API Success] Model ${gModel} returned ${text.length} chars.`);
+              return text.trim();
+            }
+          }
+        } catch (gErr) {
+          console.warn(`Direct Gemini API model ${gModel} notice:`, gErr);
+        }
+      }
+    }
+
+    // 2. OpenAI / AgentRouter Compatible Proxy APIs
     const endpoints = [
       'https://agentrouter.org/v1/chat/completions',
       'https://api.openai.com/v1/chat/completions'
     ];
-    const models = ['gpt-5.6-sol', 'gpt-5.5', 'claude-opus-4-6', 'gpt-4o', 'glm-5.2'];
+    const models = ['gpt-4o-mini', 'gpt-4o', 'gemini-1.5-flash', 'claude-3-5-sonnet'];
     const formatted = messages.map(m => ({ role: m.role, content: m.content }));
 
     for (const endpoint of endpoints) {
