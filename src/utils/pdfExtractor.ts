@@ -1,5 +1,4 @@
 // Enterprise PDF Text Extractor & Encoding Quality Assessor for RAG Pipeline
-import pdfParse from 'pdf-parse';
 import { PageTextQuality } from '../document/types';
 
 export interface TextQualityResult {
@@ -141,7 +140,13 @@ export function assessTextQuality(text: string): TextQualityResult {
     isRepairable = true;
   }
 
-  // 5. Letter Density check
+  // 5. Printable Character Density check (Latin, Vietnamese & Common Symbols)
+  const validPrintableMatches = text.match(/[\x20-\x7E\u00A0-\u024F\u1EA0-\u1EF9\n\r\t]/g) || [];
+  const validPrintableRatio = validPrintableMatches.length / rawLength;
+  if (validPrintableRatio < 0.75) {
+    return { isValid: false, score: 0.1, reason: `High density of non-printable binary garbage characters (valid printable ratio ${(validPrintableRatio * 100).toFixed(1)}%)` };
+  }
+
   const letterMatches = text.match(/[a-zA-Zà-ỹ0-9]/g) || [];
   if (letterMatches.length < 10) {
     return { isValid: false, score: 0.1, reason: `Very low printable letter count (${letterMatches.length} chars)` };
@@ -502,32 +507,16 @@ export async function extractTextFromPDFBufferLegacy(buffer: ArrayBuffer): Promi
 }
 
 /**
- * Universal PDF Text Extractor (Tier 1: pdf-parse Engine -> Tier 2: Pure JS FlateDecode Fallback)
+ * Universal PDF Text Extractor (Pure JS FlateDecode & CMap Stream Parser, 100% Workers V8 Isolate Compatible)
  */
 export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<string> {
-  // Tier 1: Try pdf-parse (Mozilla pdfjs-dist engine) if environment supports dynamic require
-  try {
-    const nodeBuf = new Uint8Array(buffer);
-    const pdfData = await pdfParse(nodeBuf);
-    if (pdfData && pdfData.text) {
-      const cleaned = cleanPrintableText(pdfData.text);
-      const quality = assessTextQuality(cleaned);
-      if (quality.repairedText && quality.repairedText.trim().length > 15) {
-        return quality.repairedText;
-      }
-    }
-  } catch {
-    // Dynamic require of pdf.js is not supported in Cloudflare Workers isolate - fall through to Tier 2 Pure JS
-  }
-
-  // Tier 2: Pure JS FlateDecode & CMap Stream Parser (Zero native dependencies)
   try {
     const legacyText = await extractTextFromPDFBufferLegacy(buffer);
     if (legacyText && legacyText.trim().length > 15) {
       return legacyText;
     }
   } catch (legacyErr) {
-    console.warn('[PDF Extractor] Legacy FlateDecode stream extractor notice:', legacyErr);
+    console.warn('[PDF Extractor] FlateDecode stream extractor notice:', legacyErr);
   }
 
   return '';
