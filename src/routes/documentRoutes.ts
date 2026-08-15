@@ -101,7 +101,7 @@ documentRoutes.get('/', async (c) => {
   }
 });
 
-// 3. Single Document Record Fetch
+// 3. Single Document Record Fetch & Status Stream
 documentRoutes.get('/:docId', async (c) => {
   try {
     const docId = c.req.param('docId');
@@ -111,6 +111,27 @@ documentRoutes.get('/:docId', async (c) => {
     return c.json({ document: doc });
   } catch {
     return c.json({ error: 'Lỗi truy vấn tài liệu' }, 500);
+  }
+});
+
+documentRoutes.get('/:docId/status', async (c) => {
+  try {
+    const docId = c.req.param('docId');
+    const d1Repo = new D1DocumentRepository(c.env.DB);
+    const doc = await d1Repo.getDocumentRecord(docId);
+    if (!doc) return c.json({ error: 'Không tìm thấy tài liệu' }, 404);
+    return c.json({
+      docId: doc.doc_id,
+      fileName: doc.file_name,
+      status: doc.processing_status || 'UPLOADED',
+      totalPages: doc.total_pages || 1,
+      totalChunks: doc.total_chunks || 0,
+      extractionMethod: doc.extraction_method || 'bge_m3_pipeline',
+      processedAt: doc.processed_at || doc.created_at,
+      isReady: doc.processing_status === 'READY'
+    });
+  } catch {
+    return c.json({ error: 'Lỗi kiểm tra trạng thái' }, 500);
   }
 });
 
