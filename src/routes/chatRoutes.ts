@@ -21,21 +21,32 @@ export const chatRoutes = new Hono<{ Bindings: Bindings }>();
 // Real-time Stage 2 Query Pipeline Handler (Rewrite -> Hybrid Retrieval -> RRF -> BGE Rerank Top 3-5 -> Grounded Synthesis)
 chatRoutes.post('/stream', async (c) => {
   const startTime = Date.now();
-  const body = await c.req.json<{
-    prompt: string;
-    docId?: string;
-    sessionId?: string;
-    history?: Array<{ role: 'user' | 'assistant'; content: string }>;
-  }>();
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'INVALID_JSON: Failed to parse request body as JSON' }, 400);
+  }
+
+  // Runtime Type Guard Validation (Zero-bloat edge security)
+  if (!body || typeof body !== 'object') {
+    return c.json({ error: 'INVALID_PAYLOAD: Request body must be a valid JSON object' }, 400);
+  }
+  if (typeof body.prompt !== 'string' || body.prompt.trim().length === 0) {
+    return c.json({ error: 'INVALID_INPUT: prompt must be a non-empty string' }, 400);
+  }
+  if (body.docId !== undefined && typeof body.docId !== 'string') {
+    return c.json({ error: 'INVALID_INPUT: docId must be a string if provided' }, 400);
+  }
+  if (body.sessionId !== undefined && typeof body.sessionId !== 'string') {
+    return c.json({ error: 'INVALID_INPUT: sessionId must be a string if provided' }, 400);
+  }
+
   const prompt = body.prompt;
   const docId = body.docId;
   const sessionId = body.sessionId || crypto.randomUUID();
   const traceId = crypto.randomUUID();
-  const history = body.history || [];
-
-  if (!prompt || prompt.trim().length === 0) {
-    return c.json({ error: 'Prompt is required' }, 400);
-  }
+  const history = Array.isArray(body.history) ? body.history : [];
 
   // IP Rate Limiting Check (5 Requests / 10 Minutes per IP)
   const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '127.0.0.1';
@@ -129,7 +140,7 @@ chatRoutes.post('/stream', async (c) => {
         await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
 
         // Extract keywords
-        const keywords = prompt.toLowerCase().replace(/[^\w\sÀ-ỹ0-9]/g, ' ').split(/\s+/).filter(k => k.length > 1);
+        const keywords = prompt.toLowerCase().replace(/[^\w\sÀ-ỹ0-9]/g, ' ').split(/\s+/).filter((k: string) => k.length > 1);
 
         // 1. Hybrid Retrieval (Vectorize Top 25 + D1 Sparse) -> RRF Merge
         const candidates = await hybridRetriever.retrieveCandidates(prompt, keywords, docId, 25, 20);

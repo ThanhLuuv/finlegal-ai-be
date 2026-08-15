@@ -30,10 +30,10 @@ export class VectorRepository {
   }
 
   /**
-   * Generates single text embedding using 768-dim compatible models (Flow A §8 & Flow B §12)
+   * Generates single text embedding normalized to Vectorize 768-dim index (Flow A §8 & Flow B §12)
    */
   public async generateEmbedding(text: string): Promise<number[]> {
-    const models = ['@cf/baai/bge-base-en-v1.5', '@cf/baai/bge-m3', '@cf/google/embeddinggemma-300m'];
+    const models = ['@cf/baai/bge-m3', '@cf/baai/bge-base-en-v1.5', '@cf/google/embeddinggemma-300m'];
     const safeText = safeTruncateText(text, 2500);
 
     for (const modelName of models) {
@@ -43,7 +43,7 @@ export class VectorRepository {
           return adjustVectorDimension(res.data[0], 768);
         }
       } catch {
-        // try next model
+        // Fallback to next embedding model
       }
     }
 
@@ -51,7 +51,7 @@ export class VectorRepository {
   }
 
   /**
-   * Generates batch embeddings in parallel using 768-dim compatible models
+   * Generates batch embeddings in parallel using 1024-dim compatible models
    */
   public async generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
@@ -62,7 +62,7 @@ export class VectorRepository {
       batches.push(texts.slice(i, i + batchSize));
     }
 
-    const models = ['@cf/baai/bge-base-en-v1.5', '@cf/baai/bge-m3', '@cf/google/embeddinggemma-300m'];
+    const models = ['@cf/baai/bge-m3', '@cf/baai/bge-base-en-v1.5', '@cf/google/embeddinggemma-300m'];
     const batchResults = await Promise.all(
       batches.map(async (batchTexts) => {
         const safeBatch = batchTexts.map(t => safeTruncateText(t, 2500));

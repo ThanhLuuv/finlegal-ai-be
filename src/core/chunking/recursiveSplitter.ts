@@ -24,8 +24,8 @@ export interface StructuredRagChunk {
 }
 
 export interface SplitterOptions {
-  chunkSizeTokens?: number; // Target 600 - 800 tokens
-  chunkOverlapTokens?: number; // Target 120 - 150 tokens
+  chunkSizeTokens?: number; // Target 450 - 600 tokens
+  chunkOverlapTokens?: number; // Target 50 - 100 tokens
   separators?: string[];
 }
 
@@ -36,11 +36,11 @@ export class RecursiveCharacterTextSplitter {
 
   constructor(options?: SplitterOptions) {
     // Approx 1 token ≈ 4 characters for Vietnamese/English text mix
-    const targetTokens = options?.chunkSizeTokens || 700;
-    const overlapTokens = options?.chunkOverlapTokens || 135;
+    const targetTokens = options?.chunkSizeTokens || 500;
+    const overlapTokens = options?.chunkOverlapTokens || 75;
 
-    this.chunkSizeChars = targetTokens * 4; // ~2800 chars
-    this.chunkOverlapChars = overlapTokens * 4; // ~540 chars
+    this.chunkSizeChars = targetTokens * 4; // ~2000 chars (~500 tokens)
+    this.chunkOverlapChars = overlapTokens * 4; // ~300 chars (~75 tokens)
     this.separators = options?.separators || ['\n\n', '\n', '. ', '; ', ' ', ''];
   }
 
@@ -53,7 +53,10 @@ export class RecursiveCharacterTextSplitter {
   }
 
   /**
-   * Recursively splits document text into semantic chunks with overlap & metadata
+   * Structure-First Chunking Pipeline
+   * Step 1: Split document into natural structural sections (# Header, ## Section, Tables)
+   * Step 2: Preserve sections <= 500 tokens intact
+   * Step 3: Recursively split sections > 500 tokens
    */
   public splitText(
     fullText: string,
@@ -64,23 +67,40 @@ export class RecursiveCharacterTextSplitter {
     const cleanText = (fullText || '').replace(/\r/g, '').trim();
     if (!cleanText) return [];
 
-    const rawSegments = this.splitRecursive(cleanText, this.separators);
-    const mergedBlocks = this.mergeSegmentsWithOverlap(rawSegments);
+    // Step 1: Detect Structural Sections
+    const rawStructuralBlocks = this.extractStructuralBlocks(cleanText);
+    const finalBlocks: string[] = [];
+
+    for (const block of rawStructuralBlocks) {
+      if (block.length <= this.chunkSizeChars) {
+        finalBlocks.push(block);
+      } else {
+        const subSegments = this.splitRecursive(block, this.separators);
+        const mergedSubs = this.mergeSegmentsWithOverlap(subSegments);
+        finalBlocks.push(...mergedSubs);
+      }
+    }
 
     const chunks: StructuredRagChunk[] = [];
-    let cumulativePage = defaultPageStart;
+    let currentSectionTitle = 'Nội dung tài liệu';
+    const sectionPath: string[] = [];
 
-    for (let i = 0; i < mergedBlocks.length; i++) {
-      const content = mergedBlocks[i].trim();
+    for (let i = 0; i < finalBlocks.length; i++) {
+      const content = finalBlocks[i].trim();
       if (content.length === 0) continue;
 
-      // Extract section title from Markdown headers if present (# Title or ## Section)
+      // Extract section title from Markdown headers if present
       const headerMatch = content.match(/^#{1,4}\s+(.+)$/m);
-      const sectionTitle = headerMatch ? headerMatch[1].trim() : 'Nội dung tài liệu';
+      if (headerMatch) {
+        currentSectionTitle = headerMatch[1].trim();
+        if (!sectionPath.includes(currentSectionTitle)) {
+          sectionPath.push(currentSectionTitle);
+        }
+      }
+
       const containsTable = content.includes('|') && content.split('\n').some(line => line.trim().startsWith('|'));
       const tokenCount = this.estimateTokens(content);
-
-      const chunkId = `${docId}_chunk_${i}`;
+      const chunkId = `${docId}_v1_chunk_${i}`;
 
       chunks.push({
         id: chunkId,
@@ -93,10 +113,10 @@ export class RecursiveCharacterTextSplitter {
           docId,
           fileName,
           chunkIndex: i,
-          pageStart: cumulativePage,
-          pageEnd: cumulativePage,
-          sectionTitle,
-          sectionPath: [sectionTitle],
+          pageStart: defaultPageStart,
+          pageEnd: defaultPageStart,
+          sectionTitle: currentSectionTitle,
+          sectionPath: [...sectionPath],
           tokenCount,
           containsTable
         }
@@ -107,7 +127,33 @@ export class RecursiveCharacterTextSplitter {
   }
 
   /**
-   * Internal recursive splitting algorithm
+   * Structure Detector: Splits document by Markdown headers & tables
+   */
+  private extractStructuralBlocks(text: string): string[] {
+    const lines = text.split('\n');
+    const blocks: string[] = [];
+    let currentBlock: string[] = [];
+
+    for (const line of lines) {
+      const isHeader = /^#{1,4}\s+/.test(line.trim());
+      const isTableStart = line.trim().startsWith('|') && currentBlock.length > 0 && !currentBlock[currentBlock.length - 1].trim().startsWith('|');
+
+      if ((isHeader || isTableStart) && currentBlock.length > 0) {
+        blocks.push(currentBlock.join('\n'));
+        currentBlock = [];
+      }
+      currentBlock.push(line);
+    }
+
+    if (currentBlock.length > 0) {
+      blocks.push(currentBlock.join('\n'));
+    }
+
+    return blocks.filter(b => b.trim().length > 0);
+  }
+
+  /**
+   * Internal recursive splitting algorithm for blocks > 500 tokens
    */
   private splitRecursive(text: string, separators: string[]): string[] {
     const finalChunks: string[] = [];
