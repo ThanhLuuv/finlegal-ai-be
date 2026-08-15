@@ -93,7 +93,7 @@ export class D1DocumentRepository {
     }
 
     await this.db.prepare(
-      `INSERT INTO document_records (doc_id, file_name, r2_key, tenant_id, user_id, version, is_active, parent_doc_id, total_pages, total_chunks, processing_status, created_at)
+      `INSERT OR IGNORE INTO document_records (doc_id, file_name, r2_key, tenant_id, user_id, version, is_active, parent_doc_id, total_pages, total_chunks, processing_status, created_at)
        VALUES (?, ?, ?, ?, ?, ?, 1, ?, 1, 0, 'UPLOADED', ?)`
     ).bind(docId, name, key, tenantId, userId, version, parentDocId, new Date().toISOString()).run();
   }

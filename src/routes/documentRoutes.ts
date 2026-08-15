@@ -261,12 +261,12 @@ documentRoutes.post('/', async (c) => {
         docId,
         fileName,
         r2Key,
-        options: { version: 'v1' }
+        options: { version: 'v1', r2Key }
       });
     } else {
       // Background execution via waitUntil to prevent HTTP blocking timeout
       c.executionCtx.waitUntil(
-        consumer.processIngestionJob(docId, fileName, arrayBuffer)
+        consumer.processIngestionJob(docId, fileName, arrayBuffer, { r2Key })
       );
     }
 

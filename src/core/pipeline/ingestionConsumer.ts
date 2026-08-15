@@ -51,13 +51,13 @@ export class IngestionConsumer {
     docId: string,
     fileName: string,
     buffer: ArrayBuffer,
-    options?: { userId?: string; version?: string; parentDocId?: string }
+    options?: { userId?: string; version?: string; parentDocId?: string; r2Key?: string }
   ): Promise<IngestionJobResult> {
     let retryCount = 0;
     const maxRetries = 2;
 
     // Step 1: Save raw original file in R2 & Initial D1 Record
-    const r2Key = await this.r2Repo.uploadDocument(docId, fileName, buffer);
+    const r2Key = options?.r2Key || await this.r2Repo.uploadDocument(docId, fileName, buffer);
     await this.d1Repo.createInitialRecord({
       docId,
       fileName,
