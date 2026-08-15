@@ -135,6 +135,21 @@ documentRoutes.get('/:docId/status', async (c) => {
   }
 });
 
+documentRoutes.get('/:docId/chunks', async (c) => {
+  try {
+    const docId = c.req.param('docId');
+    const d1Repo = new D1DocumentRepository(c.env.DB);
+    const chunks = await d1Repo.getAllChunks(docId);
+    return c.json({
+      docId,
+      totalChunks: chunks.length,
+      chunks
+    });
+  } catch {
+    return c.json({ error: 'Lỗi truy vấn danh sách chunks' }, 500);
+  }
+});
+
 // 4. Direct Document File View / Preview Endpoint
 documentRoutes.get('/:docId/view', async (c) => {
   try {
