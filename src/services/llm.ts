@@ -161,6 +161,9 @@ export class LLMProviderService {
                 console.log(`[Direct Gemini Vision API Success] Model ${gModel} extracted ${text.length} chars.`);
                 return text.trim();
               }
+            } else {
+              const errBody = await res.text();
+              console.warn(`[Direct Gemini Vision API ${gModel} HTTP ${res.status}]:`, errBody.slice(0, 300));
             }
           } catch (gErr) {
             console.warn(`Direct Gemini model ${gModel} notice:`, gErr);
@@ -221,6 +224,9 @@ export class LLMProviderService {
                   console.log(`[Multimodal Vision API Success] Model ${modelName} extracted ${content.length} chars.`);
                   return content.trim();
                 }
+              } else {
+                const errBody = await res.text();
+                console.warn(`[Multimodal Vision API ${modelName} at ${endpoint} HTTP ${res.status}]:`, errBody.slice(0, 300));
               }
             } catch (err) {
               console.warn(`Vision model ${modelName} notice:`, err);
