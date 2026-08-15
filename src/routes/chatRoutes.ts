@@ -136,6 +136,24 @@ chatRoutes.post('/stream', async (c) => {
       // Step 2 & 3: Hybrid Retrieval & Reranking if RAG_ONLY or HYBRID_AUDIT
       let topEvidenceBlocks: any[] = [];
       if (intent === 'RAG_ONLY' || intent === 'HYBRID_AUDIT') {
+        // Status Polling Check: If document is still processing in background, wait up to 10s for status = READY
+        if (docId) {
+          let docRecord = await d1Repo.getDocumentRecord(docId);
+          let waitCount = 0;
+          while (docRecord && docRecord.processing_status !== 'READY' && docRecord.processing_status !== 'FAILED' && waitCount < 10) {
+            state.thoughtProcess.push({
+              agent: 'RAG_AGENT',
+              status: 'EXECUTING',
+              thought: `Tài liệu đang được bóc tách và tạo chỉ mục Vector (Trạng thái: ${docRecord.processing_status || 'PROCESSING'}). Vui lòng chờ giây lát...`,
+              timestamp: Date.now()
+            });
+            await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
+            await new Promise(r => setTimeout(r, 1000));
+            docRecord = await d1Repo.getDocumentRecord(docId);
+            waitCount++;
+          }
+        }
+
         state.thoughtProcess.push({
           agent: 'RAG_AGENT',
           status: 'EXECUTING',

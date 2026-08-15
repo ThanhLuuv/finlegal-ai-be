@@ -63,7 +63,10 @@ export class HybridRetriever {
     let sparseMatches: Array<{ chunkId: string; content: string; metadata: any }> = [];
     if (keywords.length > 0 && targetDocId) {
       sparseMatches = await this.d1Repo.searchChunksByKeywords(targetDocId, keywords, topSparse);
-    } else if (targetDocId && denseMatches.length === 0) {
+    }
+
+    // 3. Fallback Guarantee: If targetDocId is specified and both Dense & Sparse returned 0 candidates, fetch all document chunks directly from D1
+    if (targetDocId && denseMatches.length === 0 && sparseMatches.length === 0) {
       sparseMatches = await this.d1Repo.getAllChunks(targetDocId);
     }
 
