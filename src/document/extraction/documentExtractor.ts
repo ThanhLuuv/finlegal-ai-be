@@ -2,7 +2,7 @@
 
 import { StandardPdfExtractor, RawExtractedDocument } from './pdfExtractor';
 import { OcrDocumentExtractor } from './ocrExtractor';
-import { isCMapFontGarbage, isBinaryNoise } from './legacyPdfExtractor';
+import { isCMapFontGarbage, isBinaryNoise, isPDFSyntaxChunk } from './legacyPdfExtractor';
 import { LLMProviderService } from '../../services/llm';
 
 export interface IDocumentExtractor {
@@ -29,6 +29,7 @@ export class DocumentExtractorFactory implements IDocumentExtractor {
       
       const isReadableText = result.text &&
         result.text.trim().length > 10 &&
+        !isPDFSyntaxChunk(result.text) &&
         !isCMapFontGarbage(result.text) &&
         !isBinaryNoise(result.text);
 
@@ -40,7 +41,7 @@ export class DocumentExtractorFactory implements IDocumentExtractor {
       if (this.llm) {
         try {
           const aiText = await this.llm.processMultimodalDocument(buffer, fileName);
-          if (aiText && aiText.trim().length > 20 && !isCMapFontGarbage(aiText)) {
+          if (aiText && aiText.trim().length > 20 && !isCMapFontGarbage(aiText) && !isPDFSyntaxChunk(aiText)) {
             return {
               text: aiText,
               pages: [{ pageNumber: 1, content: aiText }],

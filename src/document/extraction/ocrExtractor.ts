@@ -1,5 +1,6 @@
 import { RawExtractedDocument } from './pdfExtractor';
 import { LLMProviderService } from '../../services/llm';
+import { isCMapFontGarbage, isPDFSyntaxChunk, stripPDFSyntaxNoise, cleanPrintableText } from './legacyPdfExtractor';
 
 export class OcrDocumentExtractor {
   private llm?: LLMProviderService;
@@ -9,11 +10,11 @@ export class OcrDocumentExtractor {
   }
 
   public async extractScanned(buffer: ArrayBuffer, fileName: string): Promise<RawExtractedDocument> {
-    // 1. Delegate document reading to AI Multimodal Vision (@cf/google/gemini-2.5-flash)
+    // 1. Delegate document reading to AI Multimodal Vision
     if (this.llm) {
       try {
         const aiText = await this.llm.processMultimodalDocument(buffer, fileName);
-        if (aiText && aiText.trim().length > 10) {
+        if (aiText && aiText.trim().length > 10 && !isCMapFontGarbage(aiText) && !isPDFSyntaxChunk(aiText)) {
           return {
             text: aiText,
             pages: [{ pageNumber: 1, content: aiText }],
@@ -26,19 +27,20 @@ export class OcrDocumentExtractor {
       }
     }
 
-    // 2. Dynamic UTF-8 / ASCII text decoder fallback from buffer without hardcoded strings
+    // 2. Dynamic text decoder fallback - ensure PDF binary syntax noise is stripped
     const textDecoder = new TextDecoder('utf-8');
     let rawStr = '';
     try { rawStr = textDecoder.decode(buffer); } catch { }
 
-    const cleanContent = rawStr
-      .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const cleanContent = cleanPrintableText(stripPDFSyntaxNoise(rawStr));
+
+    const finalContent = (isPDFSyntaxChunk(cleanContent) || isCMapFontGarbage(cleanContent))
+      ? `[Tài liệu PDF (${fileName}) chứa dữ liệu mã hóa hoặc ảnh quét. Cần xem lại định dạng file.]`
+      : cleanContent;
 
     return {
-      text: cleanContent,
-      pages: [{ pageNumber: 1, content: cleanContent }],
+      text: finalContent,
+      pages: [{ pageNumber: 1, content: finalContent }],
       pageCount: 1,
       extractionMethod: 'scanned_pdf_decoder'
     };

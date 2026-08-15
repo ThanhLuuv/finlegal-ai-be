@@ -62,38 +62,53 @@ export function stripPDFSyntaxNoise(text: string): string {
 export function isPDFSyntaxChunk(text: string): boolean {
   if (!text) return true;
   const upper = text.toUpperCase();
+  if (upper.includes('%PDF-') || upper.includes('XREF') || upper.includes('TRAILER') || upper.includes('ENDOBJ') || upper.includes('ENDSTREAM')) {
+    return true;
+  }
   const pdfKeywords = [
+    '%PDF-',
+    'XREF',
+    'TRAILER',
+    'ENDOBJ',
+    'ENDSTREAM',
     'CIDFONTTYPE',
     'CIDTOGIDMAP',
     'CIDSYSTEMINFO',
     'OUTPUTINTENT',
     'STRUCTELEM',
-    'ENDOBJ',
     'FONTDESCRIPTOR',
     'IDENTITY',
     'GTS_PDFA1',
-    'SUBTYPE'
+    'SUBTYPE',
+    'MEDIABOX',
+    'CROPBOX',
+    'PROCSET',
+    '/TYPE /PAGES',
+    '/TYPE /CATALOG',
+    '/TYPE /FONT'
   ];
   let matchCount = 0;
   for (const kw of pdfKeywords) {
     if (upper.includes(kw)) matchCount++;
   }
-  return matchCount >= 2 || upper.includes('CIDFONTTYPE2') || upper.includes('OUTPUTINTENT');
+  return matchCount >= 1;
 }
 
-const VIETNAMESE_TEXT_REGEX = /[A-Za-z0-9àáảãạâầấẩẫậnăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđĐÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ\s\.,:\-\(\)\/\$\%\&\@\+\=\_\;\"\'\?\!\<\>\[\]\{\}]/g;
+const HUMAN_READABLE_TEXT_REGEX = /[A-Za-z0-9àáảãạâầấẩẫậnăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđĐÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ\s\.,:\-\(\)\"\'\?\!\=\+]/g;
 
 export function isCMapFontGarbage(text: string): boolean {
   if (!text || text.trim().length === 0) return true;
 
+  if (isPDFSyntaxChunk(text)) return true;
+
   // 1. Unprintable control characters check
   const controlGarbage = text.match(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/g) || [];
-  if (controlGarbage.length / text.length > 0.25) return true;
+  if (controlGarbage.length / text.length > 0.15) return true;
 
   // 2. Exact Vietnamese Unicode & English Alphanumeric & Punctuation ratio check
-  const validReadableChars = text.match(VIETNAMESE_TEXT_REGEX) || [];
+  const validReadableChars = text.match(HUMAN_READABLE_TEXT_REGEX) || [];
   const validRatio = validReadableChars.length / text.length;
-  if (validRatio < 0.20) return true;
+  if (validRatio < 0.60) return true;
 
   return false;
 }
