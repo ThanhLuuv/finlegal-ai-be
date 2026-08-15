@@ -388,12 +388,22 @@ export async function extractTextFromPDFBufferLegacy(buffer: ArrayBuffer): Promi
   if (decompressedTextBlocks.length > 0) {
     const fullText = stripPDFSyntaxNoise(decompressedTextBlocks.join('\n\n'));
     const qual = assessTextQuality(fullText);
-    if (qual.isValid) return qual.repairedText || fullText;
+    if (qual.repairedText && qual.repairedText.trim().length > 15) {
+      return qual.repairedText;
+    }
+    if (fullText.trim().length > 15) {
+      return fullText;
+    }
   }
 
   const fallbackParsed = stripPDFSyntaxNoise(parseTextFromStreamString(fullLatin1Str, globalCMap));
   const fallbackQual = assessTextQuality(fallbackParsed);
-  if (fallbackQual.isValid) return fallbackQual.repairedText || fallbackParsed;
+  if (fallbackQual.repairedText && fallbackQual.repairedText.trim().length > 15) {
+    return fallbackQual.repairedText;
+  }
+  if (fallbackParsed.trim().length > 15) {
+    return fallbackParsed;
+  }
 
   return '';
 }
@@ -402,30 +412,29 @@ export async function extractTextFromPDFBufferLegacy(buffer: ArrayBuffer): Promi
  * Universal PDF Text Extractor (Tier 1: pdf-parse Engine -> Tier 2: Pure JS FlateDecode Fallback)
  */
 export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<string> {
-  // Tier 1: Try pdf-parse (Mozilla pdfjs-dist engine)
+  // Tier 1: Try pdf-parse (Mozilla pdfjs-dist engine) if environment supports dynamic require
   try {
     const nodeBuf = new Uint8Array(buffer);
     const pdfData = await pdfParse(nodeBuf);
     if (pdfData && pdfData.text) {
       const cleaned = cleanPrintableText(pdfData.text);
       const quality = assessTextQuality(cleaned);
-      if (quality.isValid && quality.repairedText) {
+      if (quality.repairedText && quality.repairedText.trim().length > 15) {
         return quality.repairedText;
       }
     }
-  } catch (pdfParseErr) {
-    console.warn('[PDF Extractor] pdf-parse tier 1 notice:', pdfParseErr);
+  } catch {
+    // Dynamic require of pdf.js is not supported in Cloudflare Workers isolate - fall through to Tier 2 Pure JS
   }
 
-  // Tier 2: Fall back to Pure JS FlateDecode & CMap Stream Parser
+  // Tier 2: Pure JS FlateDecode & CMap Stream Parser (Zero native dependencies)
   try {
     const legacyText = await extractTextFromPDFBufferLegacy(buffer);
-    const quality = assessTextQuality(legacyText);
-    if (quality.isValid && quality.repairedText) {
-      return quality.repairedText;
+    if (legacyText && legacyText.trim().length > 15) {
+      return legacyText;
     }
   } catch (legacyErr) {
-    console.warn('[PDF Extractor] Legacy FlateDecode tier 2 notice:', legacyErr);
+    console.warn('[PDF Extractor] Legacy FlateDecode stream extractor notice:', legacyErr);
   }
 
   return '';

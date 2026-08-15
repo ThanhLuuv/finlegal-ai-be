@@ -94,39 +94,17 @@ export class LLMProviderService {
           }) as any;
 
           const extractedText = extractLLMResponseText(response);
-          if (extractedText && extractedText.trim().length > 20) {
+          if (extractedText && extractedText.trim().length > 20 && !extractedText.includes('dUueV')) {
             console.log(`[Workers AI Gemini 2.5 Flash Success] Extracted ${extractedText.length} chars.`);
             return extractedText.trim();
           }
-        } catch (geminiNativeErr) {
-          console.warn('[Workers AI Gemini 2.5 Flash Native format notice]:', geminiNativeErr);
-        }
-
-        // Try Messages Format Fallback
-        try {
-          const response = await (this.ai as any).run('google/gemini-2.5-flash', {
-            messages: [
-              {
-                role: 'system',
-                content: 'You are an expert AI Document OCR & Vision Transcriber. Extract ALL text, candidate names, contact information, work history, education, skills, dates, and tables from the attached document into clean Markdown.'
-              },
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: `Please extract all readable text from file: ${fileName}` },
-                  { type: 'image_url', image_url: { url: `data:application/pdf;base64,${base64Str}` } }
-                ]
-              }
-            ]
-          }) as any;
-
-          const extractedText = extractLLMResponseText(response);
-          if (extractedText && extractedText.trim().length > 20) {
-            console.log(`[Workers AI Gemini 2.5 Flash Messages Success] Extracted ${extractedText.length} chars.`);
-            return extractedText.trim();
+        } catch (geminiNativeErr: any) {
+          const errStr = String(geminiNativeErr);
+          if (errStr.includes('2021') || errStr.includes('Invalid User Credentials')) {
+            console.warn('[Workers AI Gemini 2.5 Flash] Entitlement notice: Cloudflare Workers AI free tier require paid plan/credentials for Google models.');
+          } else {
+            console.warn('[Workers AI Gemini 2.5 Flash Native format notice]:', geminiNativeErr);
           }
-        } catch (geminiMsgErr) {
-          console.warn('[Workers AI Gemini 2.5 Flash Messages format notice]:', geminiMsgErr);
         }
       } catch (cfGeminiErr) {
         console.warn('[Workers AI Gemini 2.5 Flash] Notice:', cfGeminiErr);
@@ -190,22 +168,14 @@ export class LLMProviderService {
       }
     }
 
-    // 3. Fallback to Cloudflare Workers AI Text Models
+    // 3. Fallback to Cloudflare Workers AI Text Models (Only if text is valid human text, not compressed binary noise)
     const textDecoder = new TextDecoder('utf-8');
     let rawStr = '';
     try { rawStr = textDecoder.decode(pdfBuffer); } catch {}
 
     let cleanedSample = stripPDFSyntaxNoise(rawStr);
     if (!cleanedSample || cleanedSample.trim().length < 20 || isPDFSyntaxChunk(cleanedSample)) {
-      const pdfKeywords = new Set([
-        'TYPE', 'OUTPUTINTENT', 'GTS_PDFA1', 'STRUCTELEM', 'ENDOBJ', 'OBJ', 'STREAM', 'ENDSTREAM',
-        'CIDFONTTYPE', 'CIDFONTTYPE2', 'CIDTOGIDMAP', 'CIDSYSTEMINFO', 'IDENTITY', 'SUBTYPE',
-        'FONTDESCRIPTOR', 'FONTFILE', 'FONTFILE2', 'FONTFILE3', 'PROCSET', 'MEDIABOX', 'CROPBOX',
-        'RESOURCES', 'PARENT', 'KIDS', 'ROOT', 'INFO', 'TRANSPARENCY', 'COUNT', 'LAST', 'GROUP'
-      ]);
-      const wordTokens = (rawStr.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [])
-        .filter(token => !pdfKeywords.has(token.toUpperCase()));
-      cleanedSample = wordTokens.join(' ');
+      return null;
     }
 
     const compactText = cleanedSample.slice(0, 12000);
@@ -215,7 +185,7 @@ export class LLMProviderService {
       '@cf/mistral/mistral-7b-instruct-v0.1'
     ];
 
-    if (this.ai && compactText.trim().length > 10) {
+    if (this.ai && compactText.trim().length > 20) {
       for (const modelName of visionModels) {
         try {
           console.log(`[LLM Vision] Calling Workers AI Model: ${modelName}...`);
@@ -233,7 +203,7 @@ export class LLMProviderService {
           }) as any;
 
           const extractedText = extractLLMResponseText(response);
-          if (extractedText && extractedText.trim().length > 10) {
+          if (extractedText && extractedText.trim().length > 20) {
             console.log(`[LLM Vision Success] Workers AI model ${modelName} extracted ${extractedText.length} chars.`);
             return extractedText.trim();
           }
