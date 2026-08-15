@@ -65,10 +65,77 @@ export class LLMProviderService {
   public async processMultimodalDocument(pdfBuffer: ArrayBuffer, fileName: string): Promise<string | null> {
     if (pdfBuffer.byteLength > 25 * 1024 * 1024) return null;
 
-    // 1. Try OpenAI / AgentRouter Multimodal Vision API if API Key is available
+    const base64Str = arrayBufferToBase64(pdfBuffer);
+
+    // 1. Primary Engine: Workers AI Native `google/gemini-2.5-flash` Multimodal Model (Zero external key, 1M context)
+    if (this.ai) {
+      try {
+        console.log(`[Workers AI Native] Calling google/gemini-2.5-flash for document: ${fileName}...`);
+        
+        // Try Native Gemini Parts Format first
+        try {
+          const response = await (this.ai as any).run('google/gemini-2.5-flash', {
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: 'application/pdf',
+                      data: base64Str
+                    }
+                  },
+                  {
+                    text: `You are an expert AI Document OCR & Structure Extractor. Extract ALL text, candidate names, contact information, work history, education, skills, dates, and tables from the attached document. Return ONLY pristine Markdown formatted text. Preserve all facts accurately.`
+                  }
+                ]
+              }
+            ]
+          }) as any;
+
+          const extractedText = extractLLMResponseText(response);
+          if (extractedText && extractedText.trim().length > 20) {
+            console.log(`[Workers AI Gemini 2.5 Flash Success] Extracted ${extractedText.length} chars.`);
+            return extractedText.trim();
+          }
+        } catch (geminiNativeErr) {
+          console.warn('[Workers AI Gemini 2.5 Flash Native format notice]:', geminiNativeErr);
+        }
+
+        // Try Messages Format Fallback
+        try {
+          const response = await (this.ai as any).run('google/gemini-2.5-flash', {
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an expert AI Document OCR & Vision Transcriber. Extract ALL text, candidate names, contact information, work history, education, skills, dates, and tables from the attached document into clean Markdown.'
+              },
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: `Please extract all readable text from file: ${fileName}` },
+                  { type: 'image_url', image_url: { url: `data:application/pdf;base64,${base64Str}` } }
+                ]
+              }
+            ]
+          }) as any;
+
+          const extractedText = extractLLMResponseText(response);
+          if (extractedText && extractedText.trim().length > 20) {
+            console.log(`[Workers AI Gemini 2.5 Flash Messages Success] Extracted ${extractedText.length} chars.`);
+            return extractedText.trim();
+          }
+        } catch (geminiMsgErr) {
+          console.warn('[Workers AI Gemini 2.5 Flash Messages format notice]:', geminiMsgErr);
+        }
+      } catch (cfGeminiErr) {
+        console.warn('[Workers AI Gemini 2.5 Flash] Notice:', cfGeminiErr);
+      }
+    }
+
+    // 2. Secondary Engine: Try OpenAI / AgentRouter Multimodal Vision API if API Key is available
     if (this.openaiApiKey) {
       try {
-        const base64Str = arrayBufferToBase64(pdfBuffer);
         const dataUrl = `data:application/pdf;base64,${base64Str}`;
         const endpoints = [
           'https://agentrouter.org/v1/chat/completions',
@@ -79,7 +146,7 @@ export class LLMProviderService {
         for (const endpoint of endpoints) {
           for (const modelName of visionModels) {
             try {
-              console.log(`[Multimodal Vision AI] Calling ${modelName} at ${endpoint}...`);
+              console.log(`[Multimodal Vision API] Calling ${modelName} at ${endpoint}...`);
               const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
@@ -109,7 +176,7 @@ export class LLMProviderService {
                 const data = await res.json() as any;
                 const content = data.choices?.[0]?.message?.content;
                 if (content && content.trim().length > 20) {
-                  console.log(`[Multimodal Vision AI Success] Model ${modelName} extracted ${content.length} chars.`);
+                  console.log(`[Multimodal Vision API Success] Model ${modelName} extracted ${content.length} chars.`);
                   return content.trim();
                 }
               }
@@ -123,7 +190,7 @@ export class LLMProviderService {
       }
     }
 
-    // 2. Fallback to Cloudflare Workers AI Models
+    // 3. Fallback to Cloudflare Workers AI Text Models
     const textDecoder = new TextDecoder('utf-8');
     let rawStr = '';
     try { rawStr = textDecoder.decode(pdfBuffer); } catch {}
@@ -240,6 +307,7 @@ QUY TẮC BẮT BUỘC:
 
     // Active Workers AI valid model catalog mapping
     const models = [
+      'google/gemini-2.5-flash',
       '@cf/qwen/qwen3-30b-a3b-fp8',
       '@cf/mistral/mistral-7b-instruct-v0.1'
     ];
