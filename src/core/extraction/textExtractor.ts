@@ -1,5 +1,6 @@
 // Universal Document Text Extractor for PDF, DOCX, TXT, CSV & Markdown (Flow §4 Dual-Tier Alignment)
 
+import { unzipSync, strFromU8 } from 'fflate';
 import { 
   extractTextFromPDFBuffer, 
   cleanPrintableText, 
@@ -57,21 +58,57 @@ export class UniversalTextExtractor {
   }
 
   /**
-   * Structured Word (.docx) XML Parser
-   * Preserves Paragraphs (<w:p>), Headings (<w:pStyle>), Line breaks (<w:br>), Tabs (<w:tab>), and Tables (<w:tbl>, <w:tr>, <w:tc>)
+   * Structured Word (.docx) ZIP Decompressor & XML Parser (fflate)
+   * Decompresses word/document.xml from DOCX zip archive and extracts paragraphs, headings, & tables
    */
   private extractDocx(buffer: ArrayBuffer): ExtractedDocument {
+    try {
+      const bytes = new Uint8Array(buffer);
+      const unzipped = unzipSync(bytes);
+
+      // Find word/document.xml in ZIP entries
+      let documentXml: string | null = null;
+      for (const key of Object.keys(unzipped)) {
+        if (key.toLowerCase().endsWith('word/document.xml')) {
+          documentXml = strFromU8(unzipped[key]);
+          break;
+        }
+      }
+
+      if (!documentXml) {
+        for (const key of Object.keys(unzipped)) {
+          if (key.endsWith('.xml') && key.includes('document')) {
+            documentXml = strFromU8(unzipped[key]);
+            break;
+          }
+        }
+      }
+
+      if (documentXml) {
+        return this.parseDocxXml(documentXml, buffer.byteLength);
+      }
+    } catch (e) {
+      console.error('fflate DOCX unzip error:', e);
+    }
+
+    // Fallback if unzipping failed
     const decoder = new TextDecoder('utf-8');
     const rawString = decoder.decode(buffer);
-    
+    return this.parseDocxXml(rawString, buffer.byteLength);
+  }
+
+  /**
+   * Parses extracted word/document.xml into Markdown Text & Tables
+   */
+  private parseDocxXml(rawXml: string, byteLength: number): ExtractedDocument {
     const lines: string[] = [];
 
     // Step 1: Extract Tables (<w:tbl>) as Markdown Tables
     const tblRegex = /<w:tbl[\s\S]*?<\/w:tbl>/g;
     let tblMatch: RegExpExecArray | null;
-    let processedRaw = rawString;
+    let processedRaw = rawXml;
 
-    while ((tblMatch = tblRegex.exec(rawString)) !== null) {
+    while ((tblMatch = tblRegex.exec(rawXml)) !== null) {
       const tblXml = tblMatch[0];
       const rows: string[][] = [];
       const trMatches = tblXml.match(/<w:tr[\s\S]*?<\/w:tr>/g) || [];
@@ -108,10 +145,9 @@ export class UniversalTextExtractor {
     // Step 2: Extract Paragraphs (<w:p>) with Heading levels
     const pMatches = processedRaw.match(/<w:p[\s\S]*?<\/w:p>/g) || [];
     for (const pXml of pMatches) {
-      // Check for Heading style
       const styleMatch = pXml.match(/<w:pStyle w:val="([^"]+)"/);
       const styleVal = styleMatch ? styleMatch[1].toLowerCase() : '';
-      
+
       let prefix = '';
       if (styleVal.includes('heading1') || styleVal.includes('title')) prefix = '# ';
       else if (styleVal.includes('heading2')) prefix = '## ';
@@ -130,7 +166,7 @@ export class UniversalTextExtractor {
 
     // If paragraph matching returned empty, fallback to simple <w:t> run extraction
     if (lines.length === 0) {
-      const matches = rawString.match(/<w:t[^>]*>(.*?)<\/w:t>/g) || [];
+      const matches = rawXml.match(/<w:t[^>]*>(.*?)<\/w:t>/g) || [];
       for (const m of matches) {
         const clean = m.replace(/<[^>]+>/g, '').trim();
         if (clean) lines.push(clean);
@@ -149,7 +185,7 @@ export class UniversalTextExtractor {
 
     if (!cleanText || cleanText.trim().length === 0) {
       return {
-        text: `[Tài liệu Word DOCX (${buffer.byteLength} bytes)]`,
+        text: `[Tài liệu Word DOCX (${byteLength} bytes)]`,
         pageCount: 1,
         extractionMethod: 'docx_xml_extractor_fallback'
       };
@@ -158,7 +194,7 @@ export class UniversalTextExtractor {
     return {
       text: cleanText,
       pageCount: Math.max(1, Math.ceil(cleanText.length / 2500)),
-      extractionMethod: 'docx_structured_xml_parser'
+      extractionMethod: 'docx_fflate_xml_parser'
     };
   }
 
