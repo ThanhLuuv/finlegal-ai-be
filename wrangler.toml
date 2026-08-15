@@ -28,5 +28,6 @@ binding = "AI"
 [vars]
 ENVIRONMENT = "production"
 LANGFUSE_HOST = "https://cloud.langfuse.com"
+CF_AIG_URL = "https://gateway.ai.cloudflare.com/v1/78eede6ec04d52fe8b367f14cecb7c08/gemini"
 
 

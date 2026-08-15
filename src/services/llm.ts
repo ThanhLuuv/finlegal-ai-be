@@ -179,6 +179,7 @@ export class LLMProviderService {
         const imageUrls = embeddedImages.length > 0 ? embeddedImages : [`data:image/jpeg;base64,${base64Str}`];
 
         const endpoints = [
+          'https://gateway.ai.cloudflare.com/v1/78eede6ec04d52fe8b367f14cecb7c08/gemini/compat/chat/completions',
           'https://agentrouter.org/v1/chat/completions',
           'https://api.openai.com/v1/chat/completions'
         ];
@@ -469,8 +470,9 @@ QUY TẮC BẮT BUỘC:
       }
     }
 
-    // 2. OpenAI / AgentRouter Compatible Proxy APIs
+    // 2. OpenAI / AgentRouter / Cloudflare AI Gateway Compatible Proxy APIs
     const endpoints = [
+      'https://gateway.ai.cloudflare.com/v1/78eede6ec04d52fe8b367f14cecb7c08/gemini/compat/chat/completions',
       'https://agentrouter.org/v1/chat/completions',
       'https://api.openai.com/v1/chat/completions'
     ];

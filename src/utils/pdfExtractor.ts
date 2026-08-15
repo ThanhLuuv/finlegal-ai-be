@@ -337,6 +337,37 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
     pos = etIdx + 2;
   }
 
+  // Fallback: If no BT...ET blocks yielded text, search the entire stream for literal strings (...) and hex strings <...>
+  if (textBlocks.length === 0) {
+    const directStrRegex = /\(([\s\S]*?)\)/g;
+    let match: RegExpExecArray | null;
+    while ((match = directStrRegex.exec(rawString)) !== null) {
+      if (match[1] && match[1].length > 1) {
+        const cleaned = cleanPrintableText(match[1]);
+        if (cleaned.length > 0 && !isPDFSyntaxChunk(cleaned)) {
+          textBlocks.push(cleaned);
+        }
+      }
+    }
+
+    const directHexRegex = /<([0-9A-Fa-f\s]{4,})>/g;
+    let hexMatch: RegExpExecArray | null;
+    while ((hexMatch = directHexRegex.exec(rawString)) !== null) {
+      const hexClean = hexMatch[1].replace(/\s+/g, '').toUpperCase();
+      if (cmap && cmap.size > 0) {
+        let decodedStr = '';
+        for (let i = 0; i < hexClean.length; i += 4) {
+          const chunk = hexClean.substring(i, i + 4);
+          decodedStr += cmap.get(chunk) || '';
+        }
+        if (decodedStr.length > 0) textBlocks.push(decodedStr);
+      } else {
+        const decodedDirect = decodeHexPDFString(hexClean);
+        if (decodedDirect.length > 0) textBlocks.push(decodedDirect);
+      }
+    }
+  }
+
   return stripPDFSyntaxNoise(textBlocks.join(' '));
 }
 
@@ -370,7 +401,10 @@ export async function extractTextFromPDFBufferLegacy(buffer: ArrayBuffer): Promi
 
     if (endStreamIdx > startOffset) {
       const streamBytes = bytes.subarray(startOffset, endStreamIdx);
-      const decompressed = await decompressFlate(streamBytes);
+      let decompressed = await decompressFlate(streamBytes);
+      if (!decompressed || decompressed.length === 0) {
+        decompressed = streamBytes;
+      }
 
       if (decompressed && decompressed.length > 0) {
         let decompressedStr = '';
