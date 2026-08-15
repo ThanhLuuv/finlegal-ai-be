@@ -3,7 +3,8 @@
 export function cleanPrintableText(text: string): string {
   if (!text) return '';
   return text
-    .replace(/[\x00-\x1F\x7F-\x9F\uFFFD]/g, ' ')
+    .replace(/\x00/g, '')
+    .replace(/[\x01-\x1F\x7F-\x9F\uFFFD]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -93,27 +94,18 @@ export function stripPDFSyntaxNoise(text: string): string {
 export function isPDFSyntaxChunk(text: string): boolean {
   if (!text) return true;
   const upper = text.toUpperCase();
-  if (upper.includes('%PDF-') || upper.includes('XREF') || upper.includes('TRAILER') || upper.includes('ENDOBJ') || upper.includes('ENDSTREAM')) {
+  if (upper.includes('%PDF-') || upper.includes('XREF 1') || upper.includes('TRAILER <<')) {
     return true;
   }
   const pdfKeywords = [
     '%PDF-',
-    'XREF',
-    'TRAILER',
-    'ENDOBJ',
-    'ENDSTREAM',
     'CIDFONTTYPE',
     'CIDTOGIDMAP',
     'CIDSYSTEMINFO',
     'OUTPUTINTENT',
     'STRUCTELEM',
     'FONTDESCRIPTOR',
-    'IDENTITY',
     'GTS_PDFA1',
-    'SUBTYPE',
-    'MEDIABOX',
-    'CROPBOX',
-    'PROCSET',
     '/TYPE /PAGES',
     '/TYPE /CATALOG',
     '/TYPE /FONT'
@@ -122,7 +114,7 @@ export function isPDFSyntaxChunk(text: string): boolean {
   for (const kw of pdfKeywords) {
     if (upper.includes(kw)) matchCount++;
   }
-  return matchCount >= 1;
+  return matchCount >= 2;
 }
 
 const HUMAN_READABLE_TEXT_REGEX = /[A-Za-z0-9àáảãạâầấẩẫậnăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđĐÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ\s\.,:\-\(\)\"\'\?\!\=\+]/g;
@@ -133,9 +125,11 @@ const HUMAN_READABLE_TEXT_REGEX = /[A-Za-z0-9àáảãạâầấẩẫậnăằ
 export function isBinaryNoise(text: string): boolean {
   if (!text || text.trim().length < 4) return true;
   if (isPDFSyntaxChunk(text)) return true;
+  const controlGarbage = text.match(/[\x01-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/g) || [];
+  if (controlGarbage.length / text.length > 0.15) return true;
   const validChars = text.match(HUMAN_READABLE_TEXT_REGEX) || [];
   const validRatio = validChars.length / text.length;
-  return validRatio < 0.60;
+  return validRatio < 0.40;
 }
 
 /**
