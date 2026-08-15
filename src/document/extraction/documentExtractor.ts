@@ -16,7 +16,7 @@ export class DocumentExtractorFactory implements IDocumentExtractor {
 
   constructor(llm?: LLMProviderService) {
     this.pdfExtractor = new StandardPdfExtractor();
-    this.ocrExtractor = new OcrDocumentExtractor();
+    this.ocrExtractor = new OcrDocumentExtractor(llm);
     this.llm = llm;
   }
 

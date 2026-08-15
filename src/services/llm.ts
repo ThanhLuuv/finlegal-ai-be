@@ -48,6 +48,8 @@ function extractLLMResponseText(res: any): string | null {
   return null;
 }
 
+import { stripPDFSyntaxNoise, isPDFSyntaxChunk } from '../utils/pdfExtractor';
+
 export class LLMProviderService {
   private ai: Ai;
   private openaiApiKey?: string;
@@ -67,7 +69,21 @@ export class LLMProviderService {
     const textDecoder = new TextDecoder('utf-8');
     let rawStr = '';
     try { rawStr = textDecoder.decode(pdfBuffer); } catch {}
-    const compactText = rawStr.slice(0, 12000);
+
+    let cleanedSample = stripPDFSyntaxNoise(rawStr);
+    if (!cleanedSample || cleanedSample.trim().length < 20 || isPDFSyntaxChunk(cleanedSample)) {
+      const pdfKeywords = new Set([
+        'TYPE', 'OUTPUTINTENT', 'GTS_PDFA1', 'STRUCTELEM', 'ENDOBJ', 'OBJ', 'STREAM', 'ENDSTREAM',
+        'CIDFONTTYPE', 'CIDFONTTYPE2', 'CIDTOGIDMAP', 'CIDSYSTEMINFO', 'IDENTITY', 'SUBTYPE',
+        'FONTDESCRIPTOR', 'FONTFILE', 'FONTFILE2', 'FONTFILE3', 'PROCSET', 'MEDIABOX', 'CROPBOX',
+        'RESOURCES', 'PARENT', 'KIDS', 'ROOT', 'INFO', 'TRANSPARENCY', 'COUNT', 'LAST', 'GROUP'
+      ]);
+      const wordTokens = (rawStr.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [])
+        .filter(token => !pdfKeywords.has(token.toUpperCase()));
+      cleanedSample = wordTokens.join(' ');
+    }
+
+    const compactText = cleanedSample.slice(0, 12000);
 
     const visionModels = [
       '@cf/qwen/qwen3-30b-a3b-fp8',
