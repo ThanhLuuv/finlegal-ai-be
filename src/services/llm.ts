@@ -196,12 +196,17 @@ export class LLMProviderService {
                 userContentParts.push({ type: 'image_url', image_url: { url: imgUrl } });
               }
 
+              const reqHeaders: Record<string, string> = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.openaiApiKey}`
+              };
+              if (endpoint.includes('gateway.ai.cloudflare.com')) {
+                reqHeaders['cf-aig-authorization'] = `Bearer ${this.openaiApiKey}`;
+              }
+
               const res = await fetch(endpoint, {
                 method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${this.openaiApiKey}`
-                },
+                headers: reqHeaders,
                 body: JSON.stringify({
                   model: modelName,
                   messages: [
@@ -482,12 +487,17 @@ QUY TẮC BẮT BUỘC:
     for (const endpoint of endpoints) {
       for (const modelName of models) {
         try {
+          const reqHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.openaiApiKey}`
+          };
+          if (endpoint.includes('gateway.ai.cloudflare.com')) {
+            reqHeaders['cf-aig-authorization'] = `Bearer ${this.openaiApiKey}`;
+          }
+
           const res = await fetch(endpoint, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${this.openaiApiKey}`
-            },
+            headers: reqHeaders,
             body: JSON.stringify({
               model: modelName,
               messages: formatted,
