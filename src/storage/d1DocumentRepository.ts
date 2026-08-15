@@ -199,7 +199,7 @@ export class D1DocumentRepository {
   }
 
   /**
-   * Persists structure-aware chunks into D1 Database
+   * Persists structure-aware chunks into D1 Database & FTS Index
    */
   public async saveChunks(docId: string, chunks: RagChunk[], tenantId = 'tenant_default'): Promise<void> {
     if (!chunks || chunks.length === 0) return;
@@ -226,6 +226,12 @@ export class D1DocumentRepository {
         JSON.stringify(chunk.metadata),
         chunk.id
       ).run();
+
+      try {
+        await this.db.prepare(
+          `INSERT OR REPLACE INTO document_chunks_fts (chunk_id, document_id, content) VALUES (?, ?, ?)`
+        ).bind(chunk.id, docId, chunk.content).run();
+      } catch {}
     }
   }
 
@@ -271,15 +277,48 @@ export class D1DocumentRepository {
   }
 
   /**
-   * Performs SQL-level lexical keyword search on document_chunks using parameterized LIKE queries
+   * Performs Sparse / Keyword search on document_chunks using D1 FTS5 or LIKE fallback (Flow §14)
    */
   public async searchChunksByKeywords(docId: string, keywords: string[], limit = 20): Promise<Array<{ chunkId: string; content: string; metadata: any }>> {
     if (!keywords || keywords.length === 0) return [];
-    try {
-      // Build SQL query dynamically with parameterized LIKE conditions
-      const validKeywords = keywords.slice(0, 5).filter(k => k.trim().length > 1);
-      if (validKeywords.length === 0) return [];
 
+    const validKeywords = keywords.slice(0, 5).filter(k => k.trim().length > 1);
+    if (validKeywords.length === 0) return [];
+
+    // 1. Try D1 FTS5 Virtual Table Search
+    try {
+      const ftsQuery = validKeywords.map(k => `"${k.replace(/"/g, '')}"`).join(' OR ');
+      const ftsSql = `SELECT c.id, c.content, c.page_start, c.page_end, c.chunk_index, c.metadata_json 
+                      FROM document_chunks_fts f 
+                      JOIN document_chunks c ON f.chunk_id = c.id 
+                      WHERE f.document_id = ? AND f.content MATCH ? 
+                      LIMIT ?`;
+
+      const { results } = await this.db.prepare(ftsSql).bind(docId, ftsQuery, limit).all<any>();
+      if (results && results.length > 0) {
+        return results.map((r: any) => {
+          let meta: any = {};
+          try { meta = JSON.parse(r.metadata_json || '{}'); } catch {}
+          return {
+            chunkId: r.id,
+            content: r.content,
+            metadata: {
+              docId,
+              fileName: meta.fileName || 'document.pdf',
+              pageStart: r.page_start || 1,
+              pageEnd: r.page_end || 1,
+              sectionTitle: meta.sectionTitle || 'Nội dung tài liệu',
+              sectionPath: meta.sectionPath || [],
+              chunkIndex: r.chunk_index || 0,
+              text: r.content
+            }
+          };
+        });
+      }
+    } catch {}
+
+    // 2. Parameterized SQL LIKE Fallback
+    try {
       const likeClauses = validKeywords.map(() => `content LIKE ?`).join(' OR ');
       const sql = `SELECT id, content, page_start, page_end, chunk_index, metadata_json 
                    FROM document_chunks 

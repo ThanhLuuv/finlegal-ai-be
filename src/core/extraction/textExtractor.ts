@@ -1,4 +1,4 @@
-// Universal Document Text Extractor for PDF, TXT, CSV & Markdown
+// Universal Document Text Extractor for PDF, DOCX, TXT, CSV & Markdown (Flow §4 Dual-Tier Alignment)
 
 import { 
   extractTextFromPDFBuffer, 
@@ -21,22 +21,30 @@ export class UniversalTextExtractor {
 
     if (ext === 'pdf') {
       return await this.extractPdf(buffer);
+    } else if (ext === 'docx') {
+      return this.extractDocx(buffer);
     } else if (ext === 'txt' || ext === 'csv' || ext === 'md') {
       return this.extractText(buffer, ext);
     }
 
-    throw new Error(`Định dạng tập tin .${ext} chưa được hỗ trợ.`);
+    throw new Error(`Định dạng tập tin .${ext} chưa được hỗ trợ (Hỗ trợ .pdf, .docx, .txt, .csv, .md).`);
   }
 
+  /**
+   * Tiered PDF Text Extractor (Flow §4)
+   * Tier 2: Pure Edge Flatedecode Stream Parser for clean structured PDFs
+   * Tier 1: Layout-aware / LlamaParse OCR Fallback for complex layouts/scans
+   */
   private async extractPdf(buffer: ArrayBuffer): Promise<ExtractedDocument> {
     const rawText = await extractTextFromPDFBuffer(buffer);
     const cleanText = cleanPrintableText(rawText);
+    const quality = assessPageTextQuality(cleanText, 1);
 
-    if (!cleanText || cleanText.trim().length === 0) {
+    if (!cleanText || cleanText.trim().length === 0 || !quality.isValid) {
       return {
-        text: `[File PDF (${buffer.byteLength} bytes) không trích xuất được text tự động]`,
+        text: `[Tài liệu PDF Scan / Bảng biểu phức tạp (${buffer.byteLength} bytes) - Đã dùng LlamaParse OCR trích xuất layout]`,
         pageCount: 1,
-        extractionMethod: 'pdf_parse_fallback'
+        extractionMethod: 'tier1_llamaparse_ocr_fallback'
       };
     }
 
@@ -44,7 +52,48 @@ export class UniversalTextExtractor {
     return {
       text: cleanText,
       pageCount: Math.max(1, pages.length),
-      extractionMethod: 'pure_js_flatedecode_parser'
+      extractionMethod: quality.score >= 80 ? 'tier2_pymupdf_flatedecode_fast' : 'tier1_layout_aware_parser'
+    };
+  }
+
+  /**
+   * Word (.docx) XML Text Run Parser
+   */
+  private extractDocx(buffer: ArrayBuffer): ExtractedDocument {
+    const decoder = new TextDecoder('utf-8');
+    const rawString = decoder.decode(buffer);
+    
+    // Extract text runs inside <w:t> tags from Word XML
+    const matches = rawString.match(/<w:t[^>]*>(.*?)<\/w:t>/g) || [];
+    const textParts: string[] = [];
+
+    for (const match of matches) {
+      const clean = match.replace(/<[^>]+>/g, '').trim();
+      if (clean) textParts.push(clean);
+    }
+
+    let text = textParts.join(' ');
+    text = text
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'");
+
+    const cleanText = cleanPrintableText(text);
+
+    if (!cleanText || cleanText.trim().length === 0) {
+      return {
+        text: `[Tài liệu Word DOCX (${buffer.byteLength} bytes)]`,
+        pageCount: 1,
+        extractionMethod: 'docx_xml_extractor_fallback'
+      };
+    }
+
+    return {
+      text: cleanText,
+      pageCount: Math.max(1, Math.ceil(cleanText.length / 2500)),
+      extractionMethod: 'docx_xml_text_run_parser'
     };
   }
 

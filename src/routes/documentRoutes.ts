@@ -137,6 +137,8 @@ documentRoutes.get('/:docId/view', async (c) => {
     let contentType = 'application/octet-stream';
     if (ext === 'pdf') {
       contentType = hasPdfMagic ? 'application/pdf' : 'text/plain; charset=utf-8';
+    } else if (ext === 'docx') {
+      contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     } else if (ext === 'txt') {
       contentType = 'text/plain; charset=utf-8';
     } else if (ext === 'csv') {
@@ -199,7 +201,7 @@ documentRoutes.delete('/:docId', async (c) => {
   }
 });
 
-// 6. Document Upload Endpoint (Stage 1 Async Ingestion Pipeline)
+// 6. Document Upload Endpoint (Stage 1 Async Queue Ingestion Pipeline - Flow §8)
 documentRoutes.post('/', async (c) => {
   try {
     let formData: any;
@@ -226,9 +228,9 @@ documentRoutes.post('/', async (c) => {
     }
 
     const ext = fileName.split('.').pop()?.toLowerCase() || '';
-    const allowedExts = ['pdf', 'txt', 'csv', 'md'];
+    const allowedExts = ['pdf', 'docx', 'txt', 'csv', 'md'];
     if (!allowedExts.includes(ext)) {
-      return c.json({ error: `INVALID_FILE: Định dạng file .${ext} chưa hỗ trợ (Hỗ trợ .pdf, .txt, .csv, .md).` }, 400);
+      return c.json({ error: `INVALID_FILE: Định dạng file .${ext} chưa hỗ trợ (Hỗ trợ .pdf, .docx, .txt, .csv, .md).` }, 400);
     }
 
     if (!arrayBuffer || arrayBuffer.byteLength === 0) {
@@ -240,22 +242,47 @@ documentRoutes.post('/', async (c) => {
     }
 
     const docId = `doc_${Date.now()}`;
+    const r2Repo = new R2DocumentRepository(c.env.R2);
+    const d1Repo = new D1DocumentRepository(c.env.DB);
     const consumer = new IngestionConsumer(c.env.DB, c.env.VECTORIZE, c.env.R2, c.env.AI);
 
-    const result = await consumer.processIngestionJob(docId, fileName, arrayBuffer);
+    // Step 1: Save raw original file to R2 & Initial D1 record with UPLOADED status
+    const r2Key = await r2Repo.uploadDocument(docId, fileName, arrayBuffer);
+    await d1Repo.createInitialRecord({
+      docId,
+      fileName,
+      r2Key,
+      version: 'v1'
+    });
+
+    // Step 2: Dispatch Async Queue Job or Background Worker execution (Flow §8)
+    if (c.env.INGESTION_QUEUE) {
+      await c.env.INGESTION_QUEUE.send({
+        docId,
+        fileName,
+        r2Key,
+        options: { version: 'v1' }
+      });
+    } else {
+      // Background execution via waitUntil to prevent HTTP blocking timeout
+      c.executionCtx.waitUntil(
+        consumer.processIngestionJob(docId, fileName, arrayBuffer)
+      );
+    }
 
     return c.json({
       success: true,
-      docId: result.docId,
-      fileName: result.fileName,
-      totalChunks: result.totalChunks,
-      message: result.message
+      docId,
+      fileName,
+      status: 'UPLOADED',
+      message: 'Tài liệu đã được tải lên thành công và đang được bóc tách dữ liệu không đồng bộ trong nền.'
     });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Lỗi xử lý tài liệu: ${errorMsg}` }, 500);
   }
 });
+
 
 // 7. Document Version Update Endpoint
 documentRoutes.post('/:docId/version', async (c) => {

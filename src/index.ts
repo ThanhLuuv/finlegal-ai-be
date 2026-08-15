@@ -13,6 +13,7 @@ export interface Bindings {
   VECTORIZE: VectorizeIndex;
   R2: R2Bucket;
   AI: Ai;
+  INGESTION_QUEUE?: Queue;
   GEMINI_API_KEY?: string;
   OPENAI_API_KEY?: string;
   LANGFUSE_PUBLIC_KEY?: string;
@@ -104,4 +105,34 @@ app.post('/api/upload', async (c) => {
   }), c.env, c.executionCtx);
 });
 
-export default app;
+import { IngestionConsumer } from './core/pipeline/ingestionConsumer';
+
+export default {
+  fetch: app.fetch,
+  async queue(batch: MessageBatch<any>, env: Bindings): Promise<void> {
+    const consumer = new IngestionConsumer(env.DB, env.VECTORIZE, env.R2, env.AI);
+    for (const message of batch.messages) {
+      try {
+        const { docId, fileName, r2Key, options } = message.body as {
+          docId: string;
+          fileName: string;
+          r2Key: string;
+          options?: any;
+        };
+
+        const r2Object = await env.R2.get(r2Key);
+        if (!r2Object) {
+          throw new Error(`Queue Message Error: Original file ${r2Key} not found in R2`);
+        }
+
+        const buffer = await r2Object.arrayBuffer();
+        await consumer.processIngestionJob(docId, fileName, buffer, options);
+        message.ack();
+      } catch (err) {
+        console.error('Queue Ingestion Consumer error:', err);
+        message.retry();
+      }
+    }
+  }
+};
+
