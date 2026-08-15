@@ -1,4 +1,12 @@
-// Comprehensive, pure JS FlateDecode, CMap & Hex Decoded PDF Text Extractor for Cloudflare Workers Environment
+// Enterprise PDF Text Extractor & Encoding Quality Assessor for RAG Pipeline
+import pdfParse from 'pdf-parse';
+
+export interface TextQualityResult {
+  isValid: boolean;
+  score: number;
+  reason?: string;
+  repairedText?: string;
+}
 
 export function cleanPrintableText(text: string): string {
   if (!text) return '';
@@ -10,13 +18,88 @@ export function cleanPrintableText(text: string): string {
 }
 
 /**
- * Decodes raw PDF Hex strings like <362F3230323520852050726573656E74> into human readable text ("6/2025 – Present")
+ * Advanced Encoding & Text Quality Assessor.
+ * Detects garbled fonts, missing ToUnicode CMap tables, unmapped CID codes, high control char densities,
+ * low vowel ratios, and PDF syntax leakage.
+ */
+export function assessTextQuality(text: string): TextQualityResult {
+  if (!text || text.trim().length < 15) {
+    return { isValid: false, score: 0, reason: 'Text is empty or too short (<15 chars)' };
+  }
+
+  const rawLength = text.length;
+
+  // 1. Unmapped CID Font code check e.g. (cid:123)
+  const cidMatches = text.match(/\(cid:\d+\)/gi) || [];
+  if (cidMatches.length > 3 || (cidMatches.length * 8) / rawLength > 0.05) {
+    return { isValid: false, score: 0.1, reason: `Contains ${cidMatches.length} unmapped CID font codes (cid:XX)` };
+  }
+
+  // 2. Control characters & Replacement char \uFFFD density check
+  const controlGarbage = text.match(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/g) || [];
+  const controlRatio = controlGarbage.length / rawLength;
+  if (controlRatio > 0.04) {
+    return { isValid: false, score: 0.15, reason: `High density of control/replacement characters (${(controlRatio * 100).toFixed(1)}%)` };
+  }
+
+  // 3. PDF Internal Syntax Leakage
+  const pdfSyntaxRegex = /\b(\d+\s+\d+\s+obj|endobj|stream|endstream|\/Type\s*\/|\/MediaBox|\/FontDescriptor|\/FlateDecode|\/OutputIntent|\/CIDFontType\d*|\/CIDToGIDMap|\/Group|\/ProcSet)\b/gi;
+  const syntaxMatches = text.match(pdfSyntaxRegex) || [];
+  if (syntaxMatches.length >= 2) {
+    return { isValid: false, score: 0.2, reason: `Contains PDF internal syntax noise (${syntaxMatches.length} matches)` };
+  }
+
+  // 4. Vowel Ratio & Vietnamese/English Word Entropy Check
+  const vowelsRegex = /[aàáảãạâầấẩẫậnăằắẳẵặeèéẻẽẹêềếểễệiìíỉĩịoòóỏõọôồốổỗộơờớởỡợuùúủũụưừứửữựyỳýỷỹỵAÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶEÈÉẺẼẸÊỀẾỂỄỆIÌÍỈĨỊOÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢUÙÚỦŨỤƯỪỨỬỮỰYỲÝỶỸỴ]/g;
+  const letterRegex = /[a-zA-ZàáảãạâầấẩẫậnăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ]/g;
+
+  const totalLetters = (text.match(letterRegex) || []).length;
+  const totalVowels = (text.match(vowelsRegex) || []).length;
+
+  if (totalLetters < 10) {
+    return { isValid: false, score: 0.1, reason: `Very low letter count (${totalLetters} letters in ${rawLength} chars)` };
+  }
+
+  const vowelRatio = totalVowels / totalLetters;
+  if (vowelRatio < 0.12) {
+    return { isValid: false, score: 0.25, reason: `Low vowel ratio (${(vowelRatio * 100).toFixed(1)}%), indicating corrupt font glyph mapping` };
+  }
+
+  // 5. Gibberish Word Token Check
+  const words = text.split(/\s+/).filter(w => w.length >= 3);
+  let gibberishWords = 0;
+  for (const w of words) {
+    const lettersInWord = (w.match(letterRegex) || []).length;
+    const vowelsInWord = (w.match(vowelsRegex) || []).length;
+    if (lettersInWord >= 4 && vowelsInWord === 0) {
+      gibberishWords++;
+    }
+  }
+  const gibberishRatio = words.length > 0 ? gibberishWords / words.length : 0;
+  if (gibberishRatio > 0.25) {
+    return { isValid: false, score: 0.3, reason: `High gibberish word ratio (${(gibberishRatio * 100).toFixed(1)}% words without vowels)` };
+  }
+
+  // 6. Spacing Repair (e.g. "C V _ L U U _ V A N _ T H A N H")
+  let repaired = text;
+  if (/\b[a-zA-Zà-ỹ]\s+[a-zA-Zà-ỹ]\s+[a-zA-Zà-ỹ]\b/.test(repaired)) {
+    repaired = repaired.replace(/(?<=\b[a-zA-Zà-ỹ])\s+(?=[a-zA-Zà-ỹ]\b)/g, '');
+  }
+
+  return {
+    isValid: true,
+    score: Math.min(1.0, 0.5 + vowelRatio * 0.5),
+    repairedText: repaired
+  };
+}
+
+/**
+ * Decodes raw PDF Hex strings like <362F323032352085205072657365E74> into human readable text
  */
 export function decodeHexPDFString(hexStr: string): string {
   const cleanHex = hexStr.replace(/[^0-9A-Fa-f]/g, '');
   if (cleanHex.length < 2) return '';
 
-  // 1. Try UTF-16BE decode if cleanHex length is multiple of 4
   if (cleanHex.length % 4 === 0) {
     let utf16Str = '';
     for (let i = 0; i < cleanHex.length; i += 4) {
@@ -31,7 +114,6 @@ export function decodeHexPDFString(hexStr: string): string {
     }
   }
 
-  // 2. Try UTF-8 / Latin1 decode
   if (cleanHex.length % 2 === 0) {
     const bytes = new Uint8Array(cleanHex.length / 2);
     for (let i = 0; i < cleanHex.length; i += 2) {
@@ -53,19 +135,16 @@ export function decodeHexPDFString(hexStr: string): string {
 }
 
 /**
- * Strips raw PDF internal syntax objects (/Type /OutputIntent, endobj, /StructElem, ICC profiles)
- * and decodes embedded PDF hex text strings into clean text.
+ * Strips raw PDF internal syntax objects and decodes embedded PDF hex text strings.
  */
 export function stripPDFSyntaxNoise(text: string): string {
   if (!text) return '';
 
-  // 1. Convert all embedded PDF hex strings <362F3230...> to readable text
   let result = text.replace(/<([0-9A-Fa-f]{4,})>/g, (fullMatch, hexStr) => {
     const decoded = decodeHexPDFString(hexStr);
     return decoded && decoded.trim().length > 0 ? ` ${decoded} ` : ' ';
   });
 
-  // 2. Strip internal PDF structural operators, object tags, and CMap headers
   result = result
     .replace(/\/Type\s*\/[A-Za-z0-9]+/gi, ' ')
     .replace(/\/StructElem|\/OutputIntent|\/GTS_[A-Za-z0-9]+|\/Group|\/Transparency|\/Font|\/ProcSet|\/MediaBox|\/CropBox|\/Resources|\/Parent|\/Kids|\/Root|\/Info|\/FontDescriptor|\/FontFile\d*/gi, ' ')
@@ -88,9 +167,6 @@ export function stripPDFSyntaxNoise(text: string): string {
   return result;
 }
 
-/**
- * Detects if a chunk consists primarily of raw PDF syntax/CMap structural noise.
- */
 export function isPDFSyntaxChunk(text: string): boolean {
   if (!text) return true;
   const upper = text.toUpperCase();
@@ -98,17 +174,8 @@ export function isPDFSyntaxChunk(text: string): boolean {
     return true;
   }
   const pdfKeywords = [
-    '%PDF-',
-    'CIDFONTTYPE',
-    'CIDTOGIDMAP',
-    'CIDSYSTEMINFO',
-    'OUTPUTINTENT',
-    'STRUCTELEM',
-    'FONTDESCRIPTOR',
-    'GTS_PDFA1',
-    '/TYPE /PAGES',
-    '/TYPE /CATALOG',
-    '/TYPE /FONT'
+    '%PDF-', 'CIDFONTTYPE', 'CIDTOGIDMAP', 'CIDSYSTEMINFO', 'OUTPUTINTENT',
+    'STRUCTELEM', 'FONTDESCRIPTOR', 'GTS_PDFA1', '/TYPE /PAGES', '/TYPE /CATALOG', '/TYPE /FONT'
   ];
   let matchCount = 0;
   for (const kw of pdfKeywords) {
@@ -117,24 +184,11 @@ export function isPDFSyntaxChunk(text: string): boolean {
   return matchCount >= 2;
 }
 
-const HUMAN_READABLE_TEXT_REGEX = /[A-Za-z0-9àáảãạâầấẩẫậnăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđĐÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ\s\.,:\-\(\)\"\'\?\!\=\+]/g;
-
-/**
- * Checks if extracted text is pure binary noise.
- */
 export function isBinaryNoise(text: string): boolean {
-  if (!text || text.trim().length < 4) return true;
-  if (isPDFSyntaxChunk(text)) return true;
-  const controlGarbage = text.match(/[\x01-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/g) || [];
-  if (controlGarbage.length / text.length > 0.15) return true;
-  const validChars = text.match(HUMAN_READABLE_TEXT_REGEX) || [];
-  const validRatio = validChars.length / text.length;
-  return validRatio < 0.40;
+  const quality = assessTextQuality(text);
+  return !quality.isValid;
 }
 
-/**
- * Parses ToUnicode CMap blocks in PDF to map glyph hex codes to UTF-8 characters
- */
 function parseCMap(cmapStr: string): Map<string, string> {
   const map = new Map<string, string>();
   
@@ -210,7 +264,6 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
 
     const block = rawString.substring(btIdx, etIdx + 2);
     
-    // Extract literal strings: (Hello World) Tj
     const tjRegex = /\(([\s\S]*?)\)\s*Tj/g;
     let tjMatch: RegExpExecArray | null;
     while ((tjMatch = tjRegex.exec(block)) !== null) {
@@ -220,7 +273,6 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
       }
     }
 
-    // Extract hex strings with CMap decoding or direct hex decoding: <00010002> Tj
     const hexTjRegex = /<([0-9A-Fa-f\s]+)>\s*Tj/g;
     let hexTjMatch: RegExpExecArray | null;
     while ((hexTjMatch = hexTjRegex.exec(block)) !== null) {
@@ -240,7 +292,6 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
       }
     }
 
-    // Extract array strings: [(Hello) -10 (World)] TJ
     const tjArrayRegex = /\[([\s\S]*?)\]\s*TJ/g;
     let tjArrayMatch: RegExpExecArray | null;
     while ((tjArrayMatch = tjArrayRegex.exec(block)) !== null) {
@@ -277,22 +328,23 @@ function parseTextFromStreamString(rawString: string, cmap?: Map<string, string>
   return stripPDFSyntaxNoise(textBlocks.join(' '));
 }
 
-export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<string> {
+/**
+ * Pure JS FlateDecode & CMap Stream Parser Fallback
+ */
+export async function extractTextFromPDFBufferLegacy(buffer: ArrayBuffer): Promise<string> {
   const bytes = new Uint8Array(buffer);
   const latin1Decoder = new TextDecoder('latin1');
   const utf8Decoder = new TextDecoder('utf-8');
   const fullLatin1Str = latin1Decoder.decode(bytes);
 
-  // 1. Scan for ToUnicode CMap blocks
   let globalCMap: Map<string, string> | undefined;
   if (fullLatin1Str.includes('beginbfrange') || fullLatin1Str.includes('beginbfchar')) {
     globalCMap = parseCMap(fullLatin1Str);
   }
 
   const decompressedTextBlocks: string[] = [];
-
-  // 2. Find stream ... endstream positions via linear indexOf search (Zero Regex Backtracking)
   let searchPos = 0;
+
   while (searchPos < fullLatin1Str.length) {
     const streamIdx = fullLatin1Str.indexOf('stream', searchPos);
     if (streamIdx === -1) break;
@@ -301,8 +353,8 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
     if (endStreamIdx === -1) break;
 
     let startOffset = streamIdx + 6;
-    if (bytes[startOffset] === 13) startOffset++; // \r
-    if (bytes[startOffset] === 10) startOffset++; // \n
+    if (bytes[startOffset] === 13) startOffset++;
+    if (bytes[startOffset] === 10) startOffset++;
 
     if (endStreamIdx > startOffset) {
       const streamBytes = bytes.subarray(startOffset, endStreamIdx);
@@ -333,30 +385,46 @@ export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<str
 
   if (decompressedTextBlocks.length > 0) {
     const fullText = stripPDFSyntaxNoise(decompressedTextBlocks.join('\n\n'));
-    if (fullText.length > 10 && !isBinaryNoise(fullText)) {
-      return fullText;
-    }
+    const qual = assessTextQuality(fullText);
+    if (qual.isValid) return qual.repairedText || fullText;
   }
 
-  // 3. Fallback: parse uncompressed text blocks & decode embedded hex strings
   const fallbackParsed = stripPDFSyntaxNoise(parseTextFromStreamString(fullLatin1Str, globalCMap));
-  if (fallbackParsed.length > 10 && !isBinaryNoise(fallbackParsed)) {
-    return fallbackParsed;
-  }
+  const fallbackQual = assessTextQuality(fallbackParsed);
+  if (fallbackQual.isValid) return fallbackQual.repairedText || fallbackParsed;
 
-  // 4. Ultimate fallback: Extract printable word tokens and decode hex strings, filtering PDF syntax keywords
-  const cleanedFullStr = stripPDFSyntaxNoise(fullLatin1Str);
-  const pdfKeywords = new Set([
-    'TYPE', 'OUTPUTINTENT', 'GTS_PDFA1', 'STRUCTELEM', 'ENDOBJ', 'OBJ', 'STREAM', 'ENDSTREAM',
-    'CIDFONTTYPE', 'CIDFONTTYPE2', 'CIDTOGIDMAP', 'CIDSYSTEMINFO', 'IDENTITY', 'SUBTYPE',
-    'FONTDESCRIPTOR', 'FONTFILE', 'FONTFILE2', 'FONTFILE3', 'PROCSET', 'MEDIABOX', 'CROPBOX',
-    'RESOURCES', 'PARENT', 'KIDS', 'ROOT', 'INFO', 'TRANSPARENCY', 'COUNT', 'LAST', 'GROUP'
-  ]);
-  const wordTokens = (cleanedFullStr.match(/[A-Za-z0-9À-ỹ]{2,}/g) || [])
-    .filter(token => !pdfKeywords.has(token.toUpperCase()));
-  return wordTokens.join(' ');
+  return '';
 }
 
+/**
+ * Universal PDF Text Extractor (Tier 1: pdf-parse Engine -> Tier 2: Pure JS FlateDecode Fallback)
+ */
+export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<string> {
+  // Tier 1: Try pdf-parse (Mozilla pdfjs-dist engine)
+  try {
+    const nodeBuf = new Uint8Array(buffer);
+    const pdfData = await pdfParse(nodeBuf);
+    if (pdfData && pdfData.text) {
+      const cleaned = cleanPrintableText(pdfData.text);
+      const quality = assessTextQuality(cleaned);
+      if (quality.isValid && quality.repairedText) {
+        return quality.repairedText;
+      }
+    }
+  } catch (pdfParseErr) {
+    console.warn('[PDF Extractor] pdf-parse tier 1 notice:', pdfParseErr);
+  }
 
+  // Tier 2: Fall back to Pure JS FlateDecode & CMap Stream Parser
+  try {
+    const legacyText = await extractTextFromPDFBufferLegacy(buffer);
+    const quality = assessTextQuality(legacyText);
+    if (quality.isValid && quality.repairedText) {
+      return quality.repairedText;
+    }
+  } catch (legacyErr) {
+    console.warn('[PDF Extractor] Legacy FlateDecode tier 2 notice:', legacyErr);
+  }
 
-
+  return '';
+}

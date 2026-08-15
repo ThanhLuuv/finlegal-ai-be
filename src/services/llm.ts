@@ -63,9 +63,67 @@ export class LLMProviderService {
    * Directly extracts and structures PDF documents using Multimodal Vision AI.
    */
   public async processMultimodalDocument(pdfBuffer: ArrayBuffer, fileName: string): Promise<string | null> {
-    if (pdfBuffer.byteLength > 20 * 1024 * 1024) return null;
+    if (pdfBuffer.byteLength > 25 * 1024 * 1024) return null;
 
-    // Try Workers AI Native Models (@cf/qwen/qwen3-30b-a3b-fp8, @cf/mistral/mistral-7b-instruct-v0.1)
+    // 1. Try OpenAI / AgentRouter Multimodal Vision API if API Key is available
+    if (this.openaiApiKey) {
+      try {
+        const base64Str = arrayBufferToBase64(pdfBuffer);
+        const dataUrl = `data:application/pdf;base64,${base64Str}`;
+        const endpoints = [
+          'https://agentrouter.org/v1/chat/completions',
+          'https://api.openai.com/v1/chat/completions'
+        ];
+        const visionModels = ['gpt-4o', 'gpt-4o-mini', 'gemini-1.5-flash', 'claude-3-5-sonnet'];
+
+        for (const endpoint of endpoints) {
+          for (const modelName of visionModels) {
+            try {
+              console.log(`[Multimodal Vision AI] Calling ${modelName} at ${endpoint}...`);
+              const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${this.openaiApiKey}`
+                },
+                body: JSON.stringify({
+                  model: modelName,
+                  messages: [
+                    {
+                      role: 'system',
+                      content: 'You are an expert AI Document OCR & Vision Transcriber. Extract ALL text, candidate names, contact information, work history, education, skills, dates, and tables from the attached PDF document. Return ONLY pristine Markdown formatted text. Preserve all facts accurately.'
+                    },
+                    {
+                      role: 'user',
+                      content: [
+                        { type: 'text', text: `Please extract all readable text from file: ${fileName}` },
+                        { type: 'image_url', image_url: { url: dataUrl } }
+                      ]
+                    }
+                  ],
+                  temperature: 0.1
+                })
+              });
+
+              if (res.ok) {
+                const data = await res.json() as any;
+                const content = data.choices?.[0]?.message?.content;
+                if (content && content.trim().length > 20) {
+                  console.log(`[Multimodal Vision AI Success] Model ${modelName} extracted ${content.length} chars.`);
+                  return content.trim();
+                }
+              }
+            } catch (err) {
+              console.warn(`Vision model ${modelName} notice:`, err);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Multimodal OpenAI API fallback notice:', err);
+      }
+    }
+
+    // 2. Fallback to Cloudflare Workers AI Models
     const textDecoder = new TextDecoder('utf-8');
     let rawStr = '';
     try { rawStr = textDecoder.decode(pdfBuffer); } catch {}
@@ -119,6 +177,41 @@ export class LLMProviderService {
     }
 
     return null;
+  }
+
+  /**
+   * AI-powered Document Text Normalizer & Fact Preserving Repair.
+   * Cleans up garbled spacing, restores missing Vietnamese diacritics/headers, and formats document text into structured Markdown.
+   */
+  public async normalizeAndRepairDocumentText(rawText: string, fileName: string): Promise<string> {
+    if (!rawText || rawText.trim().length < 10) return rawText;
+
+    try {
+      const prompt: LLMMessage[] = [
+        {
+          role: 'system',
+          content: `Bạn là Hệ thống AI Chuyên gia Chuẩn hóa & Khôi phục Văn bản Tài liệu.
+Nhiệm vụ của bạn là đọc bản trích xuất thô từ tập tin PDF (${fileName}), sửa các lỗi mã hóa, lỗi dính chữ/tách chữ rác, khôi phục tiêu đề mục và trả về văn bản Markdown sạch sẽ.
+QUY TẮC BẮT BUỘC:
+1. GIỮ NGUYÊN 100% SỰ THẬT: Tên ứng viên, số điện thoại, email, địa chỉ, công ty, chức danh, thời gian làm việc, kỹ năng, dự án, v.v. Không tự bịa thêm thông tin.
+2. Trình bày dưới dạng Markdown rõ ràng với các tiêu đề mục (# Thông tin cá nhân, # Kinh nghiệm làm việc, # Học vấn, # Kỹ năng...).
+3. Không kèm lời thoại hay nhận xét cá nhân, chỉ trả về nội dung văn bản đã được chuẩn hóa.`
+        },
+        {
+          role: 'user',
+          content: `TÊN TỆP: ${fileName}\n\nVĂN BẢN THÔ CẦN CHUẨN HÓA:\n${rawText.slice(0, 15000)}`
+        }
+      ];
+
+      const cleaned = await this.generateText(prompt, { temperature: 0.1 });
+      if (cleaned && cleaned.trim().length > 20) {
+        return cleaned.trim();
+      }
+    } catch (err) {
+      console.warn('[LLMProviderService] normalizeAndRepairDocumentText notice:', err);
+    }
+
+    return rawText;
   }
 
   /**

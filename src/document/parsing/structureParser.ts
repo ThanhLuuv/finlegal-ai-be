@@ -65,8 +65,8 @@ export class StructureParser {
       }
     }
 
-    // Step 2: Detect Section Headings across the Global Block Stream
-    const headingRegex = /^(Điều\s+\d+|Chương\s+[IVXLCDM\d]+|Mục\s+\d+|Khoản\s+\d+\.\d+|Section\s+\d+|Part\s+\d+|[A-Z\d\.\s]{3,40}:)/i;
+    // Step 2: Detect Section Headings across the Global Block Stream (Contracts, CVs & Markdown Documents)
+    const headingRegex = /^(#+\s+.*|Điều\s+\d+|Chương\s+[IVXLCDM\d]+|Mục\s+\d+|Khoản\s+\d+\.\d+|Section\s+\d+|Part\s+\d+|(THÔNG TIN|KINH NGHIỆM|HỌC VẤN|KỸ NĂNG|DỰ ÁN|MỤC TIÊU|CHỨNG CHỈ|WORK EXPERIENCE|EXPERIENCE|EDUCATION|SKILLS|PROJECTS|SUMMARY|PROFILE|CONTACT|PERSONAL INFO)[^:\n]*:?|[A-Z\d\.\s]{3,40}:)/i;
     const sectionGroups: Array<{
       title: string;
       startBlockIdx: number;
