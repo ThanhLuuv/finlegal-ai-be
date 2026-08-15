@@ -1,4 +1,4 @@
-// Dynamic AI Supervisor Router - Powered by AI Semantic Intent Understanding
+// Dynamic AI Supervisor Router - Powered by DeepSeek-v4 Semantic Intent Understanding
 
 import { LLMProviderService } from '../../services/llm';
 import { MultiAgentState, UserIntent } from '../types';
@@ -11,26 +11,14 @@ export class SupervisorRouter {
   }
 
   /**
-   * Dynamically analyzes user prompt semantically with AI to route intent
+   * Dynamically analyzes user prompt semantically with DeepSeek AI to route intent
    */
   public async routeIntent(state: MultiAgentState): Promise<MultiAgentState> {
     const prompt = (state.userPrompt || '').trim();
     const hasSelectedDoc = Boolean(state.selectedDocId);
 
-    // Fast check: If user selected a document in UI -> auto route to RAG
-    if (hasSelectedDoc) {
-      state.intent = 'RAG_ONLY';
-      state.thoughtProcess.push({
-        agent: 'SUPERVISOR',
-        status: 'DONE',
-        thought: `Tài liệu (${state.selectedDocId}) đang được chọn. AI định tuyến trực tiếp vào RAG Retrieval Engine.`,
-        timestamp: Date.now()
-      });
-      return state;
-    }
-
     let userIntent: UserIntent = 'RAG_ONLY';
-    let reasoning = 'AI Supervisor đã phân tích ngữ nghĩa và định tuyến luồng xử lý.';
+    let reasoning = 'Phân tích ngữ nghĩa DeepSeek AI hoàn tất.';
 
     try {
       const classification = await this.llm.generateJSON<{
@@ -39,16 +27,20 @@ export class SupervisorRouter {
       }>([
         {
           role: 'system',
-          content: `You are Lexifin's Intelligent Supervisor Router. Analyze the user prompt semantically and classify intent into exactly one of four categories:
-1. "RAG_ONLY": Any questions about candidate CVs, contracts, legal clauses, terms, uploaded files, or document text.
-2. "SQL_ONLY": Questions purely about system database metrics, transactions, revenue, customer names, or sales database numbers.
-3. "HYBRID_AUDIT": Prompts asking to compare, audit, cross-check, or verify contract claims against sales database records.
-4. "GENERAL_CHAT": Basic greetings ("hi", "chào bạn") or general chit-chat.
+          content: `You are DeepSeek Supervisor Router for Lexifin Legal RAG System.
+Analyze the user prompt semantically and classify intent into exactly ONE category:
+
+1. "GENERAL_CHAT": Basic greetings ("chào bạn", "hi"), bot identity/capability questions ("tên bạn là gì", "bạn là ai", "bạn làm được gì", "ai tạo ra bạn"), casual chit-chat, thank you, or general questions NOT requiring document lookup.
+2. "RAG_ONLY": Any questions searching contracts, legal clauses, website pricing policies, terms, uploaded files, or document text.
+3. "SQL_ONLY": Questions purely about system database metrics, transactions, revenue, customer names, or sales database numbers.
+4. "HYBRID_AUDIT": Prompts asking to compare, audit, cross-check, or verify contract claims against sales database records.
+
+Note: If a document ID is selected (${state.selectedDocId || 'none'}), BUT the user prompt is a casual greeting or asking bot identity (e.g. "tên m là gì", "hi"), classify strictly as "GENERAL_CHAT".
 
 Respond strictly in JSON:
 {
-  "intent": "RAG_ONLY" | "SQL_ONLY" | "HYBRID_AUDIT" | "GENERAL_CHAT",
-  "reasoning": "Short Vietnamese explanation of why this intent was selected"
+  "intent": "GENERAL_CHAT" | "RAG_ONLY" | "SQL_ONLY" | "HYBRID_AUDIT",
+  "reasoning": "Giải thích ngắn gọn bằng Tiếng Việt lý do chọn luồng này"
 }`
         },
         { role: 'user', content: prompt }
@@ -59,14 +51,15 @@ Respond strictly in JSON:
         reasoning = classification.reasoning || reasoning;
       }
     } catch (err) {
-      console.warn('Supervisor AI dynamic routing notice: falling back to RAG_ONLY', err);
+      console.warn('Supervisor DeepSeek AI dynamic routing notice:', err);
+      userIntent = hasSelectedDoc ? 'RAG_ONLY' : 'GENERAL_CHAT';
     }
 
     state.intent = userIntent;
     state.thoughtProcess.push({
       agent: 'SUPERVISOR',
       status: 'DONE',
-      thought: `AI định tuyến luồng [${userIntent}]: ${reasoning}`,
+      thought: `DeepSeek AI Router định tuyến luồng [${userIntent}]: ${reasoning}`,
       timestamp: Date.now()
     });
 
