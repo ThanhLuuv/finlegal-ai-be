@@ -26,12 +26,12 @@ export class VectorRetriever {
       query.targetDocId
     );
 
-    // Sanitize retrieved matches and eliminate legacy PDF syntax noise chunks
+    // Sanitize retrieved matches and eliminate legacy PDF syntax noise chunks without filtering short valid contact/header text
     return rawMatches
       .map(m => ({
         ...m,
         text: stripPDFSyntaxNoise(m.text)
       }))
-      .filter(m => m.text.trim().length > 10 && !isPDFSyntaxChunk(m.text) && !isBinaryNoise(m.text));
+      .filter(m => m.text && m.text.trim().length > 5 && !isPDFSyntaxChunk(m.text));
   }
 }

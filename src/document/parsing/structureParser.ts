@@ -106,6 +106,16 @@ export class StructureParser {
         currentSection.endBlockIdx = i;
         currentSection.pageEnd = blk.pageNumber;
         currentSection.blocks.push(blk);
+      } else {
+        // Ensure content before the first heading (Candidate Name, Contact Info, Header) is NEVER discarded
+        currentSection = {
+          title: 'Thông tin chung',
+          startBlockIdx: i,
+          endBlockIdx: i,
+          pageStart: blk.pageNumber,
+          pageEnd: blk.pageNumber,
+          blocks: [blk]
+        };
       }
     }
 

@@ -278,7 +278,7 @@ export class D1DocumentRepository {
          FROM document_chunks 
          WHERE document_id = ? 
          ORDER BY chunk_index ASC 
-         LIMIT 20`
+         LIMIT 500`
       ).bind(docId).all<any>();
 
       if (!results || results.length === 0) return [];

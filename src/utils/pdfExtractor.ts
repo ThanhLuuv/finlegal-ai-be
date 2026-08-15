@@ -12,8 +12,13 @@ export function cleanPrintableText(text: string): string {
   if (!text) return '';
   return text
     .replace(/\x00/g, '')
-    .replace(/[\x01-\x1F\x7F-\x9F\uFFFD]/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/[\x01-\x09\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/g, ' ')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ \n/g, '\n')
+    .replace(/\n /g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
