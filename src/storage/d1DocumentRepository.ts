@@ -1,6 +1,6 @@
 // Cloudflare D1 Document Repository (Document Lifecycle & Hierarchy Persistence)
 
-import { ParsedDocument, RagChunk, ProcessingStatus } from '../document/types';
+import { ParsedDocument, RagChunk, ProcessingStatus } from '../core/types';
 
 export interface CreateDocumentRecordOptions {
   docId: string;
@@ -268,6 +268,55 @@ export class D1DocumentRepository {
    */
   public async getDocumentRecord(docId: string): Promise<any> {
     return await this.db.prepare('SELECT * FROM document_records WHERE doc_id = ?').bind(docId).first();
+  }
+
+  /**
+   * Performs SQL-level lexical keyword search on document_chunks using parameterized LIKE queries
+   */
+  public async searchChunksByKeywords(docId: string, keywords: string[], limit = 20): Promise<Array<{ chunkId: string; content: string; metadata: any }>> {
+    if (!keywords || keywords.length === 0) return [];
+    try {
+      // Build SQL query dynamically with parameterized LIKE conditions
+      const validKeywords = keywords.slice(0, 5).filter(k => k.trim().length > 1);
+      if (validKeywords.length === 0) return [];
+
+      const likeClauses = validKeywords.map(() => `content LIKE ?`).join(' OR ');
+      const sql = `SELECT id, content, page_start, page_end, chunk_index, metadata_json 
+                   FROM document_chunks 
+                   WHERE document_id = ? AND (${likeClauses}) 
+                   ORDER BY chunk_index ASC 
+                   LIMIT ?`;
+
+      const params: any[] = [docId];
+      for (const kw of validKeywords) {
+        params.push(`%${kw.trim()}%`);
+      }
+      params.push(limit);
+
+      const { results } = await this.db.prepare(sql).bind(...params).all<any>();
+      if (!results || results.length === 0) return [];
+
+      return results.map((r: any) => {
+        let meta: any = {};
+        try { meta = JSON.parse(r.metadata_json || '{}'); } catch {}
+        return {
+          chunkId: r.id,
+          content: r.content,
+          metadata: {
+            docId,
+            fileName: meta.fileName || 'document.pdf',
+            pageStart: r.page_start || 1,
+            pageEnd: r.page_end || 1,
+            sectionTitle: meta.sectionTitle || 'Nội dung tài liệu',
+            sectionPath: meta.sectionPath || [],
+            chunkIndex: r.chunk_index || 0,
+            text: r.content
+          }
+        };
+      });
+    } catch {
+      return [];
+    }
   }
 
   /**

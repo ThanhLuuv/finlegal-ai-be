@@ -1,7 +1,6 @@
 // Cloudflare Vectorize Repository (Vector Storage & Metadata Filtering)
 
-import { RagChunk, ChunkMetadata } from '../document/types';
-import { RetrievalScope } from '../rag/types';
+import { RagChunk, ChunkMetadata, RetrievalScope } from '../core/types';
 
 function safeTruncateText(text: string, maxChars = 2500): string {
   if (!text) return '';
@@ -97,7 +96,7 @@ export class VectorRepository {
       values: embeddings[idx],
       metadata: {
         docId: chunk.documentId,
-        tenantId: chunk.tenantId || chunk.metadata.tenantId || 'tenant_default',
+        tenantId: chunk.tenantId || 'tenant_default',
         fileName: chunk.metadata.fileName,
         pageStart: chunk.pageStart || 1,
         pageEnd: chunk.pageEnd || 1,
@@ -106,7 +105,7 @@ export class VectorRepository {
         chunkIndex: chunk.metadata.chunkIndex,
         chunkType: chunk.chunkType,
         text: chunk.content.slice(0, 1000), // Preserves text in metadata safely
-        containsTable: chunk.metadata.containsTable
+        containsTable: Boolean(chunk.metadata.containsTable)
       }
     }));
 
