@@ -24,17 +24,18 @@ bucket_name = "finlegal-docs"
 [ai]
 binding = "AI"
 
-# Cloudflare Queues Producer & Consumer for Async Ingestion Pipeline (Flow §8)
-[[queues.producers]]
-binding = "INGESTION_QUEUE"
-queue = "finlegal-ingestion-queue"
-
-[[queues.consumers]]
-queue = "finlegal-ingestion-queue"
-max_batch_size = 5
-max_batch_timeout = 10
-max_retries = 3
-dead_letter_queue = "finlegal-ingestion-dlq"
+# Optional Cloudflare Queues Producer & Consumer for Async Ingestion Pipeline (Flow §8)
+# Enable if Cloudflare Queues is active on your Cloudflare account:
+# [[queues.producers]]
+# binding = "INGESTION_QUEUE"
+# queue = "finlegal-ingestion-queue"
+#
+# [[queues.consumers]]
+# queue = "finlegal-ingestion-queue"
+# max_batch_size = 5
+# max_batch_timeout = 10
+# max_retries = 3
+# dead_letter_queue = "finlegal-ingestion-dlq"
 
 # Environment Variables & Non-sensitive Config
 [vars]

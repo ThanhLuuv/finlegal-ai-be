@@ -13,7 +13,7 @@ export const documentRoutes = new Hono<{ Bindings: Bindings }>();
 // 1. Seed Sample Contract Document Endpoint for Recruiter/Demo Testing
 documentRoutes.post('/seed-sample', async (c) => {
   try {
-    const docId = `doc_demo_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const docId = `doc_demo_${Date.now()}`;
     const fileName = 'Hop_dong_mua_ban_hang_hoa_mau.pdf';
 
     try {

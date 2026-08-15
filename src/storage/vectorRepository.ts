@@ -91,29 +91,38 @@ export class VectorRepository {
     const texts = chunks.map(c => c.content);
     const embeddings = await this.generateEmbeddingsBatch(texts);
 
-    const vectors: VectorizeVector[] = chunks.map((chunk, idx) => ({
-      id: chunk.id,
-      values: embeddings[idx],
-      metadata: {
-        docId: chunk.documentId,
-        tenantId: chunk.tenantId || 'tenant_default',
-        fileName: chunk.metadata.fileName,
-        pageStart: chunk.pageStart || 1,
-        pageEnd: chunk.pageEnd || 1,
-        sectionTitle: chunk.metadata.sectionTitle || '',
-        sectionPath: chunk.metadata.sectionPath ? JSON.stringify(chunk.metadata.sectionPath) : '[]',
-        chunkIndex: chunk.metadata.chunkIndex,
-        chunkType: chunk.chunkType,
-        text: chunk.content.slice(0, 1000), // Preserves text in metadata safely
-        containsTable: Boolean(chunk.metadata.containsTable)
-      }
-    }));
+    const vectors: VectorizeVector[] = chunks.map((chunk, idx) => {
+      const safeId = chunk.id.length <= 60 ? chunk.id : chunk.id.substring(0, 60);
+      return {
+        id: safeId,
+        values: embeddings[idx],
+        metadata: {
+          docId: chunk.documentId,
+          tenantId: chunk.tenantId || 'tenant_default',
+          fileName: (chunk.metadata.fileName || 'document.pdf').slice(0, 200),
+          pageStart: chunk.pageStart || 1,
+          pageEnd: chunk.pageEnd || 1,
+          sectionTitle: (chunk.metadata.sectionTitle || '').slice(0, 200),
+          sectionPath: (chunk.metadata.sectionPath ? JSON.stringify(chunk.metadata.sectionPath) : '[]').slice(0, 500),
+          chunkIndex: chunk.metadata.chunkIndex,
+          chunkType: chunk.chunkType,
+          text: chunk.content.slice(0, 1000), // Preserves text in metadata safely
+          containsTable: Boolean(chunk.metadata.containsTable)
+        }
+      };
+    });
 
     const batchSize = 50;
     for (let i = 0; i < vectors.length; i += batchSize) {
       const batch = vectors.slice(i, i + batchSize);
-      await this.vectorize.insert(batch);
+      try {
+        await (this.vectorize as any).upsert(batch);
+      } catch {
+        await this.vectorize.insert(batch);
+      }
     }
+
+    return vectors.length;
 
     return vectors.length;
   }
