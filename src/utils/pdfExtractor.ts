@@ -22,10 +22,19 @@ export function cleanPrintableText(text: string): string {
     .trim();
 }
 
+export interface TextQualityMetrics {
+  printableRatio: number;
+  replacementCharRatio: number;
+  weirdSpacingRatio: number;
+  singleCharTokenRatio: number;
+  extractedChars: number;
+  status: 'GOOD' | 'REPAIRABLE' | 'BAD';
+}
+
 /**
- * Advanced Encoding & Text Quality Assessor.
- * Detects garbled fonts, missing ToUnicode CMap tables, unmapped CID codes, high control char densities,
- * low vowel ratios, and PDF syntax leakage.
+ * Composite Multi-Metric Encoding & Text Quality Assessor.
+ * Evaluates replacement char density, CID unmapped codes, single character token spacing anomalies,
+ * and PDF syntax leakage without rigid vowel ratio heuristics.
  */
 export function assessTextQuality(text: string): TextQualityResult {
   if (!text || text.trim().length < 15) {
@@ -40,11 +49,17 @@ export function assessTextQuality(text: string): TextQualityResult {
     return { isValid: false, score: 0.1, reason: `Contains ${cidMatches.length} unmapped CID font codes (cid:XX)` };
   }
 
-  // 2. Control characters & Replacement char \uFFFD density check
-  const controlGarbage = text.match(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/g) || [];
+  // 2. Replacement char \uFFFD & Control chars density check
+  const replacementMatches = text.match(/[\uFFFD]/g) || [];
+  const replacementRatio = replacementMatches.length / rawLength;
+  if (replacementRatio > 0.03) {
+    return { isValid: false, score: 0.15, reason: `High replacement char '' ratio (${(replacementRatio * 100).toFixed(1)}%)` };
+  }
+
+  const controlGarbage = text.match(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g) || [];
   const controlRatio = controlGarbage.length / rawLength;
   if (controlRatio > 0.04) {
-    return { isValid: false, score: 0.15, reason: `High density of control/replacement characters (${(controlRatio * 100).toFixed(1)}%)` };
+    return { isValid: false, score: 0.15, reason: `High density of control characters (${(controlRatio * 100).toFixed(1)}%)` };
   }
 
   // 3. PDF Internal Syntax Leakage
@@ -54,46 +69,28 @@ export function assessTextQuality(text: string): TextQualityResult {
     return { isValid: false, score: 0.2, reason: `Contains PDF internal syntax noise (${syntaxMatches.length} matches)` };
   }
 
-  // 4. Vowel Ratio & Vietnamese/English Word Entropy Check
-  const vowelsRegex = /[aàáảãạâầấẩẫậnăằắẳẵặeèéẻẽẹêềếểễệiìíỉĩịoòóỏõọôồốổỗộơờớởỡợuùúủũụưừứửữựyỳýỷỹỵAÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶEÈÉẺẼẸÊỀẾỂỄỆIÌÍỈĨỊOÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢUÙÚỦŨỤƯỪỨỬỮỰYỲÝỶỸỴ]/g;
-  const letterRegex = /[a-zA-ZàáảãạâầấẩẫậnăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ]/g;
+  // 4. Single-character token ratio & Weird Spacing check (e.g. "C V _ L U U _ V A N")
+  const tokens = text.split(/\s+/).filter(t => t.length > 0);
+  const singleCharTokens = tokens.filter(t => t.length === 1 && /[a-zA-Zà-ỹ]/.test(t));
+  const singleCharRatio = tokens.length > 0 ? singleCharTokens.length / tokens.length : 0;
 
-  const totalLetters = (text.match(letterRegex) || []).length;
-  const totalVowels = (text.match(vowelsRegex) || []).length;
-
-  if (totalLetters < 10) {
-    return { isValid: false, score: 0.1, reason: `Very low letter count (${totalLetters} letters in ${rawLength} chars)` };
-  }
-
-  const vowelRatio = totalVowels / totalLetters;
-  if (vowelRatio < 0.12) {
-    return { isValid: false, score: 0.25, reason: `Low vowel ratio (${(vowelRatio * 100).toFixed(1)}%), indicating corrupt font glyph mapping` };
-  }
-
-  // 5. Gibberish Word Token Check
-  const words = text.split(/\s+/).filter(w => w.length >= 3);
-  let gibberishWords = 0;
-  for (const w of words) {
-    const lettersInWord = (w.match(letterRegex) || []).length;
-    const vowelsInWord = (w.match(vowelsRegex) || []).length;
-    if (lettersInWord >= 4 && vowelsInWord === 0) {
-      gibberishWords++;
-    }
-  }
-  const gibberishRatio = words.length > 0 ? gibberishWords / words.length : 0;
-  if (gibberishRatio > 0.25) {
-    return { isValid: false, score: 0.3, reason: `High gibberish word ratio (${(gibberishRatio * 100).toFixed(1)}% words without vowels)` };
-  }
-
-  // 6. Spacing Repair (e.g. "C V _ L U U _ V A N _ T H A N H")
   let repaired = text;
-  if (/\b[a-zA-Zà-ỹ]\s+[a-zA-Zà-ỹ]\s+[a-zA-Zà-ỹ]\b/.test(repaired)) {
+  let isRepairable = false;
+
+  if (singleCharRatio > 0.35 || /\b[a-zA-Zà-ỹ]\s+[a-zA-Zà-ỹ]\s+[a-zA-Zà-ỹ]\b/.test(repaired)) {
     repaired = repaired.replace(/(?<=\b[a-zA-Zà-ỹ])\s+(?=[a-zA-Zà-ỹ]\b)/g, '');
+    isRepairable = true;
+  }
+
+  // 5. Letter Density check
+  const letterMatches = text.match(/[a-zA-Zà-ỹ0-9]/g) || [];
+  if (letterMatches.length < 10) {
+    return { isValid: false, score: 0.1, reason: `Very low printable letter count (${letterMatches.length} chars)` };
   }
 
   return {
     isValid: true,
-    score: Math.min(1.0, 0.5 + vowelRatio * 0.5),
+    score: isRepairable ? 0.75 : 0.95,
     repairedText: repaired
   };
 }

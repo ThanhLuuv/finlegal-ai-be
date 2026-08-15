@@ -40,20 +40,20 @@ export class StructureChunker {
         ? section.sectionPath.join(' > ')
         : secTitle;
 
-      // Dynamic Context Header Prefix attached to every chunk
-      const headerPrefix = `[TÀI LIỆU: ${docName} | MỤC: ${sectionPathStr} | TRANG: ${section.pageStart || 1}]\n`;
+      // Dynamic Context Header Prefix attached to metadata for embedding generation
+      const headerPrefix = `Document: ${docName}\nSection: ${sectionPathStr}\nPage: ${section.pageStart || 1}\n`;
 
-      // If section is small enough, keep as single section chunk with header prefix
+      // If section is small enough, keep as single section chunk
       if (sectionContent.length <= 1500) {
-        const enrichedContent = `${headerPrefix}${sectionContent}`;
+        const embeddingText = `${headerPrefix}${sectionContent}`;
         chunks.push({
           id: `${doc.documentId}_chunk_${chunkIndex}`,
           documentId: doc.documentId,
           sectionId: section.id,
-          content: enrichedContent,
+          content: sectionContent,
           chunkType: 'section',
-          tokenCount: Math.ceil(enrichedContent.length / 4),
-          contentHash: generateHash(enrichedContent),
+          tokenCount: Math.ceil(sectionContent.length / 4),
+          contentHash: generateHash(sectionContent),
           embeddingVersion: 'v1',
           pageStart: section.pageStart || 1,
           pageEnd: section.pageEnd || 1,
@@ -67,12 +67,13 @@ export class StructureChunker {
             chunkIndex,
             documentType: doc.metadata.documentType || 'generic',
             containsTable: sectionContent.includes('|'),
-            text: enrichedContent
+            text: sectionContent,
+            embeddingText
           }
         });
         chunkIndex++;
       } else {
-        // Sub-chunk long sections into ~1000 char blocks with header prefix
+        // Sub-chunk long sections into ~1000 char blocks
         const paragraphs = sectionContent.split(/\n\s*\n/);
         let currentChunkText = '';
 
@@ -80,15 +81,15 @@ export class StructureChunker {
           const content = rawContent.trim();
           if (!content) return;
 
-          const enrichedContent = `${headerPrefix}${content}`;
+          const embeddingText = `${headerPrefix}${content}`;
           chunks.push({
             id: `${doc.documentId}_chunk_${chunkIndex}`,
             documentId: doc.documentId,
             sectionId: section.id,
-            content: enrichedContent,
+            content: content,
             chunkType: 'paragraph',
-            tokenCount: Math.ceil(enrichedContent.length / 4),
-            contentHash: generateHash(enrichedContent),
+            tokenCount: Math.ceil(content.length / 4),
+            contentHash: generateHash(content),
             embeddingVersion: 'v1',
             pageStart: section.pageStart || 1,
             pageEnd: section.pageEnd || 1,
@@ -102,7 +103,8 @@ export class StructureChunker {
               chunkIndex,
               documentType: doc.metadata.documentType || 'generic',
               containsTable: content.includes('|'),
-              text: enrichedContent
+              text: content,
+              embeddingText
             }
           });
           chunkIndex++;

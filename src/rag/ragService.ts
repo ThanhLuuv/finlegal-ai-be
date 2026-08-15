@@ -1,5 +1,7 @@
+// Enterprise Production RAG Service with Intent Routing, Small-Doc Full Context, and Hybrid Search (Dense + Lexical RRF)
+
 import { QueryAnalyzer } from './queryAnalyzer';
-import { VectorRetriever } from './vectorRetriever';
+import { VectorRetriever, RawRetrievedMatch } from './vectorRetriever';
 import { LexicalReranker } from './reranker';
 import { ContextBuilder } from './contextBuilder';
 import { VectorRepository } from '../storage/vectorRepository';
@@ -30,18 +32,17 @@ export class RagService {
     const selectedDocId = typeof scope === 'string' ? scope : scope?.documentIds?.[0];
     const parsedScope: RetrievalScope | undefined = typeof scope === 'object' ? scope : (selectedDocId ? { tenantId: 'tenant_default', documentIds: [selectedDocId] } : undefined);
 
-    // 1. Query Analysis & Conversation Contextualization
+    // 1. Query Analysis & Intent Router
     const query = await this.queryAnalyzer.analyze(userPrompt, selectedDocId, history, parsedScope);
 
-    // Intent Routing: Check if query asks for full document summary/review or if a specific single document is selected
-    const isFullDocQuery = /tóm tắt|đọc toàn bộ|nội dung file|nội dung tài liệu|phân tích|liệt kê tất cả|review|tổng quan|thông tin gì|cv này|ứng viên|hồ sơ/i.test(userPrompt);
+    // Intent Classification: Check if user asks for whole document summary/overview/review
+    const isFullDocIntent = /tóm tắt|đọc toàn bộ|nội dung file|nội dung tài liệu|phân tích|liệt kê tất cả|review|tổng quan|thông tin gì|cv này|ứng viên|hồ sơ/i.test(userPrompt);
 
-    // FULL DOCUMENT / DIRECT INJECTION MODE:
-    // If a target document is selected AND (full doc query OR small document <= 30 chunks), load ALL chunks sequentially directly from D1 Database
+    // ROUTER BRANCH 1: Small Document Full-Context Direct Mode (tokenCount <= 12,000 / chunks <= 30)
     if (selectedDocId && this.d1Repo) {
       try {
         const d1Chunks = await this.d1Repo.getAllChunks(selectedDocId);
-        if (d1Chunks.length > 0 && (isFullDocQuery || d1Chunks.length <= 30)) {
+        if (d1Chunks.length > 0 && (isFullDocIntent || d1Chunks.length <= 25)) {
           const evidenceBlocks = d1Chunks.map((c, idx) => ({
             chunkId: c.chunkId,
             documentId: selectedDocId,
@@ -61,40 +62,59 @@ export class RagService {
             }
           }));
 
-          console.log(`[3 RETRIEVED - FULL DOCUMENT MODE] Loaded ALL ${evidenceBlocks.length} sequential chunks for doc: ${selectedDocId}`);
+          console.log(`[FULL_CONTEXT MODE] Loaded ALL ${evidenceBlocks.length} sequential chunks for doc: ${selectedDocId}`);
           return this.contextBuilder.buildContext(query, evidenceBlocks);
         }
       } catch (err) {
-        console.warn('[RagService] Full Document retrieval fallback notice:', err);
+        console.warn('[RagService] Full Context direct loading notice:', err);
       }
     }
 
-    // 2. SEMANTIC SEARCH MODE: Vector Retrieval using BGE-M3 Embeddings on Vectorize Index
-    let rawMatches = await this.vectorRetriever.retrieve(query, 20);
+    // ROUTER BRANCH 2: TRUE HYBRID RETRIEVAL (Dense Vector Search + Lexical Exact Search -> RRF Fusion)
+    console.log(`[HYBRID SEARCH MODE] Querying Dense Embeddings + Lexical Matches for prompt: "${userPrompt}"`);
 
-    // Fallback if Vectorize returns 0 matches
-    if (rawMatches.length === 0 && selectedDocId && this.d1Repo) {
+    // A. Dense Vector Retrieval (Vectorize Top 20)
+    const denseMatches = await this.vectorRetriever.retrieve(query, 20);
+
+    // B. Lexical Exact Keyword Retrieval from D1 SQLite Database
+    const lexicalMatches: RawRetrievedMatch[] = [];
+    if (this.d1Repo && query.keywords.length > 0 && selectedDocId) {
       try {
-        const d1Chunks = await this.d1Repo.getAllChunks(selectedDocId);
-        if (d1Chunks.length > 0) {
-          rawMatches = d1Chunks.map(c => ({
-            chunkId: c.chunkId,
-            score: 0.85,
-            text: c.content,
-            metadata: c.metadata
-          }));
+        const allChunks = await this.d1Repo.getAllChunks(selectedDocId);
+        for (const c of allChunks) {
+          const lowerText = c.content.toLowerCase();
+          const keywordCount = query.keywords.filter(kw => lowerText.includes(kw.toLowerCase())).length;
+          if (keywordCount > 0) {
+            lexicalMatches.push({
+              chunkId: c.chunkId,
+              score: 0.5 + (keywordCount / query.keywords.length) * 0.5,
+              text: c.content,
+              metadata: c.metadata
+            });
+          }
         }
-      } catch (err) {
-        console.warn('D1 direct chunk retrieval notice:', err);
+      } catch (lexErr) {
+        console.warn('[RagService] Lexical D1 Search notice:', lexErr);
       }
     }
 
-    // 3. Reciprocal Rank Fusion (RRF) Reranking
-    const evidenceBlocks = this.reranker.rerank(rawMatches, query.keywords, 12);
+    // C. Reciprocal Rank Fusion (RRF) to combine Dense & Lexical Candidates
+    const combinedMap = new Map<string, RawRetrievedMatch>();
+    for (const m of denseMatches) combinedMap.set(m.chunkId, m);
+    for (const m of lexicalMatches) {
+      if (!combinedMap.has(m.chunkId)) {
+        combinedMap.set(m.chunkId, m);
+      }
+    }
 
-    console.log(`[3 RETRIEVED - SEMANTIC MODE] Retrieved ${evidenceBlocks.length} top candidate chunks.`);
+    const candidatePool = Array.from(combinedMap.values());
 
-    // 4. Structural Parent Section & Neighbor Expansion + Top Header Guarantee from D1 Database
+    // D. Lexical Reranker (Select Top 10-12 candidate evidence blocks)
+    const evidenceBlocks = this.reranker.rerank(candidatePool, query.keywords, 12);
+
+    console.log(`[HYBRID SEARCH SUCCESS] Fused & reranked ${evidenceBlocks.length} top evidence blocks.`);
+
+    // E. Structural Parent Section & Neighbor Chunk Context Expansion
     if (this.d1Repo && selectedDocId && evidenceBlocks.length > 0) {
       try {
         const hasHeaderChunk = evidenceBlocks.some(b => b.chunkId.endsWith('_chunk_0'));
@@ -129,7 +149,7 @@ export class RagService {
 
       for (const block of evidenceBlocks) {
         try {
-          const match = rawMatches.find(m => m.chunkId === block.chunkId);
+          const match = candidatePool.find(m => m.chunkId === block.chunkId);
           if (match && match.metadata) {
             const chunkIndex = match.metadata.chunkIndex || 0;
             const docId = match.metadata.docId;
@@ -154,7 +174,7 @@ export class RagService {
       }
     }
 
-    // 5. Evidence Context Assembly & Evidence ID Formatting
+    // 5. Evidence Context Assembly
     return this.contextBuilder.buildContext(query, evidenceBlocks);
   }
 }

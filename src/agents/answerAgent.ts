@@ -1,4 +1,4 @@
-// Zero-Hallucination Answer Synthesizer Agent with Structured Citations & Multi-Section Evidence Merging
+// Grounded Evidence-Constrained Synthesizer Agent with Structured Citations & Multi-Section Evidence Merging
 
 import { BaseAgent } from './base';
 import { AgentRole, MultiAgentState } from './state';
@@ -14,7 +14,7 @@ export class AnswerAgent extends BaseAgent {
   }
 
   public async generateAnswer(state: MultiAgentState, ragResult?: RetrievalResult): Promise<string> {
-    this.recordThought(state, 'Executing Grounding & Citation Validation based on retrieved evidence blocks...');
+    this.recordThought(state, 'Executing Grounded Evidence-Constrained Answer Synthesis...');
 
     if (ragResult && !ragResult.hasSufficientEvidence) {
       return `⚠️ **Thông báo hệ thống FinLegal AI**: Tài liệu hiện tại không chứa đủ thông tin để trả lời câu hỏi của bạn. Vui lòng cung cấp thêm thông tin hoặc chọn đúng tập tin văn bản cần tra cứu!`;

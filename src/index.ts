@@ -500,6 +500,62 @@ app.post('/api/documents/:docId/version', async (c) => {
   }
 });
 
+// 4.2. Document Re-Parse & Re-Index Endpoint (Re-executes extraction pipeline for existing document from R2)
+app.post('/api/documents/:docId/reparse', async (c) => {
+  try {
+    const docId = c.req.param('docId');
+    const d1Repo = new D1DocumentRepository(c.env.DB);
+    const doc = await d1Repo.getDocumentRecord(docId);
+
+    if (!doc || !doc.r2_key) {
+      return c.json({ error: 'Tài liệu không tồn tại trên hệ thống lưu trữ R2.' }, 404);
+    }
+
+    const r2Object = await c.env.R2.get(doc.r2_key);
+    if (!r2Object) {
+      return c.json({ error: 'Tập tin gốc không tìm thấy trên R2 Storage.' }, 404);
+    }
+
+    const arrayBuffer = await r2Object.arrayBuffer();
+    const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
+
+    // Delete existing old garbled chunks & sections from D1 & Vectorize
+    const d1VectorIds = await d1Repo.getChunkVectorIds(docId);
+    const generatedChunkIds = Array.from({ length: 300 }, (_, i) => `${docId}_chunk_${i}`);
+    const allIdsToDelete = Array.from(new Set([...d1VectorIds, ...generatedChunkIds]));
+
+    try {
+      await vectorRepo.deleteByIds(allIdsToDelete);
+    } catch {}
+
+    await c.env.DB.prepare('DELETE FROM document_chunks WHERE document_id = ?').bind(docId).run();
+    await c.env.DB.prepare('DELETE FROM document_sections WHERE document_id = ?').bind(docId).run();
+
+    // Re-run pipeline with upgraded Tier 1 pdf-parse Extractor
+    const llm = new LLMProviderService(c.env.AI, c.env.OPENAI_API_KEY);
+    const pipeline = new DocumentPipeline(
+      llm,
+      c.env.DB,
+      c.env.VECTORIZE,
+      c.env.R2,
+      c.env.AI
+    );
+
+    const result = await pipeline.processDocument(docId, doc.file_name, arrayBuffer);
+
+    return c.json({
+      success: true,
+      docId: result.docId,
+      fileName: result.fileName,
+      totalChunks: result.totalChunks,
+      message: 'Đã phân tích lại (re-parse) tài liệu thành công bằng engine trích xuất mới!'
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Không thể re-parse tài liệu: ${errorMsg}` }, 500);
+  }
+});
+
 
 // 4. Real-time Multi-Agent SSE Chat & Audit Streaming Handler
 app.post('/api/chat/stream', async (c) => {

@@ -111,6 +111,7 @@ export interface ChunkMetadata {
   documentType: string;
   containsTable: boolean;
   text: string;
+  embeddingText?: string;
 }
 
 export interface RagChunk {
