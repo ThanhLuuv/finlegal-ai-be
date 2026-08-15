@@ -52,11 +52,11 @@ chatRoutes.post('/stream', async (c) => {
   const traceId = crypto.randomUUID();
   const history = Array.isArray(body.history) ? body.history : [];
 
-  // IP Rate Limiting Check (5 Requests / 10 Minutes per IP)
+  // IP Rate Limiting Check (10 Requests / 10 Minutes per IP)
   const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '127.0.0.1';
   const now = Date.now();
   const WINDOW_MS = 10 * 60 * 1000;
-  const MAX_REQUESTS = 5;
+  const MAX_REQUESTS = 10;
 
   try {
     const record = await c.env.DB.prepare('SELECT request_count, reset_at FROM ip_rate_limits WHERE ip = ?').bind(clientIp).first<{ request_count: number; reset_at: number }>();
@@ -66,7 +66,7 @@ chatRoutes.post('/stream', async (c) => {
       } else if (record.request_count >= MAX_REQUESTS) {
         const minutesLeft = Math.ceil((record.reset_at - now) / 60000);
         return c.json({
-          error: `Hệ thống bảo vệ tự động: Địa chỉ IP của bạn đã dùng hết 5 lượt hỏi trong 10 phút để tránh rủi ro quá tải. Vui lòng quay lại sau ${minutesLeft} phút!`
+          error: `Hệ thống bảo vệ tự động: Địa chỉ IP của bạn đã dùng hết ${MAX_REQUESTS} lượt hỏi trong 10 phút để tránh rủi ro quá tải. Vui lòng quay lại sau ${minutesLeft} phút!`
         }, 429);
       } else {
         await c.env.DB.prepare('UPDATE ip_rate_limits SET request_count = request_count + 1 WHERE ip = ?').bind(clientIp).run();
