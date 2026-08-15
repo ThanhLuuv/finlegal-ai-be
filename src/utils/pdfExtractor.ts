@@ -13,22 +13,42 @@ export function cleanPrintableText(text: string): string {
  */
 export function decodeHexPDFString(hexStr: string): string {
   const cleanHex = hexStr.replace(/[^0-9A-Fa-f]/g, '');
-  if (cleanHex.length < 2 || cleanHex.length % 2 !== 0) return '';
-  const bytes = new Uint8Array(cleanHex.length / 2);
-  for (let i = 0; i < cleanHex.length; i += 2) {
-    bytes[i / 2] = parseInt(cleanHex.substring(i, i + 2), 16);
+  if (cleanHex.length < 2) return '';
+
+  // 1. Try UTF-16BE decode if cleanHex length is multiple of 4
+  if (cleanHex.length % 4 === 0) {
+    let utf16Str = '';
+    for (let i = 0; i < cleanHex.length; i += 4) {
+      const code = parseInt(cleanHex.substring(i, i + 4), 16);
+      if (!isNaN(code) && code > 0 && code !== 65535) {
+        utf16Str += String.fromCharCode(code);
+      }
+    }
+    const cleanUtf16 = cleanPrintableText(utf16Str);
+    if (cleanUtf16.length > 0 && !isPDFSyntaxChunk(cleanUtf16)) {
+      return cleanUtf16;
+    }
   }
-  try {
-    const decoded = new TextDecoder('utf-8').decode(bytes);
-    if (decoded && cleanPrintableText(decoded).length > 0) return decoded;
-  } catch {
-    // fallback
+
+  // 2. Try UTF-8 / Latin1 decode
+  if (cleanHex.length % 2 === 0) {
+    const bytes = new Uint8Array(cleanHex.length / 2);
+    for (let i = 0; i < cleanHex.length; i += 2) {
+      bytes[i / 2] = parseInt(cleanHex.substring(i, i + 2), 16);
+    }
+    try {
+      const decoded = new TextDecoder('utf-8').decode(bytes);
+      const cleanUtf8 = cleanPrintableText(decoded);
+      if (cleanUtf8.length > 0 && !isPDFSyntaxChunk(cleanUtf8)) return cleanUtf8;
+    } catch {}
+    try {
+      const latin1 = new TextDecoder('latin1').decode(bytes);
+      const cleanLatin1 = cleanPrintableText(latin1);
+      if (cleanLatin1.length > 0 && !isPDFSyntaxChunk(cleanLatin1)) return cleanLatin1;
+    } catch {}
   }
-  try {
-    return new TextDecoder('latin1').decode(bytes);
-  } catch {
-    return '';
-  }
+
+  return '';
 }
 
 /**
@@ -73,34 +93,49 @@ export function stripPDFSyntaxNoise(text: string): string {
 export function isPDFSyntaxChunk(text: string): boolean {
   if (!text) return true;
   const upper = text.toUpperCase();
+  if (upper.includes('%PDF-') || upper.includes('XREF') || upper.includes('TRAILER') || upper.includes('ENDOBJ') || upper.includes('ENDSTREAM')) {
+    return true;
+  }
   const pdfKeywords = [
+    '%PDF-',
+    'XREF',
+    'TRAILER',
+    'ENDOBJ',
+    'ENDSTREAM',
     'CIDFONTTYPE',
     'CIDTOGIDMAP',
     'CIDSYSTEMINFO',
     'OUTPUTINTENT',
     'STRUCTELEM',
-    'ENDOBJ',
     'FONTDESCRIPTOR',
     'IDENTITY',
     'GTS_PDFA1',
-    'SUBTYPE'
+    'SUBTYPE',
+    'MEDIABOX',
+    'CROPBOX',
+    'PROCSET',
+    '/TYPE /PAGES',
+    '/TYPE /CATALOG',
+    '/TYPE /FONT'
   ];
   let matchCount = 0;
   for (const kw of pdfKeywords) {
     if (upper.includes(kw)) matchCount++;
   }
-  return matchCount >= 2 || upper.includes('CIDFONTTYPE2') || upper.includes('OUTPUTINTENT');
+  return matchCount >= 1;
 }
 
+const HUMAN_READABLE_TEXT_REGEX = /[A-Za-z0-9àáảãạâầấẩẫậnăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđĐÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ\s\.,:\-\(\)\"\'\?\!\=\+]/g;
 
 /**
  * Checks if extracted text is pure binary noise.
  */
 export function isBinaryNoise(text: string): boolean {
   if (!text || text.trim().length < 4) return true;
-  const validChars = text.match(/[A-Za-z0-9À-ỹ\s\.,:\-\(\)\/\$]/g) || [];
+  if (isPDFSyntaxChunk(text)) return true;
+  const validChars = text.match(HUMAN_READABLE_TEXT_REGEX) || [];
   const validRatio = validChars.length / text.length;
-  return validRatio < 0.35;
+  return validRatio < 0.60;
 }
 
 /**

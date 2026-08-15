@@ -1,6 +1,4 @@
-// Standard PDF Text Extractor Engine
-
-import { extractLegacyPdfText, stripPDFSyntaxNoise, cleanPrintableText } from './legacyPdfExtractor';
+import { extractTextFromPDFBuffer, stripPDFSyntaxNoise, cleanPrintableText, isPDFSyntaxChunk, isBinaryNoise } from '../../utils/pdfExtractor';
 
 export interface ExtractedPage {
   pageNumber: number;
@@ -16,12 +14,12 @@ export interface RawExtractedDocument {
 
 export class StandardPdfExtractor {
   public async extract(buffer: ArrayBuffer, fileName: string): Promise<RawExtractedDocument> {
-    const rawText = await extractLegacyPdfText(buffer);
+    const rawText = await extractTextFromPDFBuffer(buffer);
     const cleaned = cleanPrintableText(stripPDFSyntaxNoise(rawText));
 
     const pages: ExtractedPage[] = [];
 
-    if (!cleaned || cleaned.trim().length === 0) {
+    if (!cleaned || cleaned.trim().length === 0 || isPDFSyntaxChunk(cleaned) || isBinaryNoise(cleaned)) {
       pages.push({ pageNumber: 1, content: '' });
       return {
         text: '',
