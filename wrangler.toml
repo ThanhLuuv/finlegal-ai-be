@@ -42,5 +42,7 @@ binding = "AI"
 ENVIRONMENT = "production"
 LANGFUSE_HOST = "https://cloud.langfuse.com"
 CF_AIG_URL = "https://gateway.ai.cloudflare.com/v1/78eede6ec04d52fe8b367f14cecb7c08/gemini"
+DOCUMENT_SERVICE_URL = "https://finlegal-document-service-386583671447.asia-southeast1.run.app"
+SERVICE_SECRET_TOKEN = "finlegal_secret_token_2026"
 
 
