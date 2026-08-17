@@ -50,10 +50,20 @@ GROUNDING & CITATION GUARDRAIL RULES:
 
     const userMsg = `CÂU HỎI NGƯỜI DÙNG:\n${userPrompt}\n\n<document_evidence>\n${formattedBlocks}\n</document_evidence>\n\nSQL D1 DATA:\n${sqlStr}`;
 
+    // Complexity Escalation Router: Simple QA -> DeepSeek V4 Flash | Complex Multi-Doc / Legal Audit -> DeepSeek V4 Pro
+    const isComplexQuery = 
+      intent === 'HYBRID_AUDIT' ||
+      evidenceBlocks.length > 5 ||
+      /so sánh|đối soát|phân tích rủi ro|quy trách nhiệm|mâu thuẫn|đối chiếu/i.test(userPrompt);
+
+    const modelForSynthesis = isComplexQuery
+      ? '@cf/deepseek-ai/deepseek-v4-pro-0813'
+      : '@cf/deepseek-ai/deepseek-v4-flash-0731';
+
     let rawAnswer = await this.llm.generateText([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMsg }
-    ], { task: 'MAIN_ANSWER' });
+    ], { task: 'MAIN_ANSWER', modelOverride: modelForSynthesis });
 
     // Clean DeepSeek <think> reasoning tags from final public answer text
     rawAnswer = rawAnswer.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();

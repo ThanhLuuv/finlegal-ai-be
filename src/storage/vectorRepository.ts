@@ -30,24 +30,27 @@ export class VectorRepository {
   }
 
   /**
-   * Generates single text embedding normalized to Vectorize 768-dim index (Flow A §8 & Flow B §12)
+   * Generates single text embedding using BAAI BGE-M3 (Strict Single Vector Space)
    */
   public async generateEmbedding(text: string): Promise<number[]> {
-    const models = ['@cf/baai/bge-m3', '@cf/baai/bge-base-en-v1.5', '@cf/google/embeddinggemma-300m'];
     const safeText = safeTruncateText(text, 2500);
+    const maxRetries = 2;
 
-    for (const modelName of models) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        const res = await (this.ai as any).run(modelName, { text: [safeText] });
+        const res = await (this.ai as any).run('@cf/baai/bge-m3', { text: [safeText] });
         if (res && res.data && res.data[0]) {
           return adjustVectorDimension(res.data[0], 768);
         }
-      } catch {
-        // Fallback to next embedding model
+      } catch (err) {
+        if (attempt === maxRetries) {
+          throw new Error(`EMBEDDING_FAILED: BGE-M3 model execution failed after ${maxRetries + 1} attempts: ${String(err)}`);
+        }
+        await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
       }
     }
 
-    throw new Error('EMBEDDING_FAILED: All embedding models failed.');
+    throw new Error('EMBEDDING_FAILED: BGE-M3 model failed to produce vector.');
   }
 
   /**
@@ -62,18 +65,17 @@ export class VectorRepository {
       batches.push(texts.slice(i, i + batchSize));
     }
 
-    const models = ['@cf/baai/bge-m3', '@cf/baai/bge-base-en-v1.5', '@cf/google/embeddinggemma-300m'];
     const batchResults = await Promise.all(
       batches.map(async (batchTexts) => {
         const safeBatch = batchTexts.map(t => safeTruncateText(t, 2500));
-        for (const modelName of models) {
+        for (let attempt = 0; attempt <= 2; attempt++) {
           try {
-            const res = await (this.ai as any).run(modelName, { text: safeBatch });
+            const res = await (this.ai as any).run('@cf/baai/bge-m3', { text: safeBatch });
             if (res && res.data && Array.isArray(res.data)) {
               return res.data.map((v: number[]) => adjustVectorDimension(v, 768));
             }
           } catch {
-            // try next model
+            await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
           }
         }
         return safeBatch.map(() => new Array(768).fill(0));

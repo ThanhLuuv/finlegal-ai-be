@@ -23,27 +23,34 @@ export class LLMProviderService {
   }
 
   /**
-   * Generates text completion with DeepSeek API First & Workers AI Fallback Strategy
+   * Generates text completion prioritizing Cloudflare Workers AI Native Model (@cf/deepseek-ai/deepseek-v4-flash-0731) - 100% Free Edge Execution
    */
   public async generateText(messages: LLMMessage[], options: LLMOptions = {}): Promise<string> {
     const temperature = options.temperature ?? 0.1;
     const maxTokens = options.max_tokens ?? 2048;
+    const targetModel = options.modelOverride || '@cf/deepseek-ai/deepseek-v4-flash-0731';
 
-    // 1. Direct DeepSeek API (deepseek-v4-flash)
+    // 1. Cloudflare Workers AI Edge Model FIRST (@cf/deepseek-ai/deepseek-v4-flash-0731)
+    try {
+      const workersRes = await this.workersAiClient.generateText(messages, temperature, maxTokens, targetModel);
+      if (workersRes && workersRes.trim().length > 0) {
+        return workersRes.trim();
+      }
+    } catch (err) {
+      console.warn('Cloudflare Workers AI execution notice:', err);
+    }
+
+    // 2. Direct DeepSeek External API Fallback
     if (this.apiKey) {
       try {
         const res = await this.deepseekClient.generateContent(messages, temperature, maxTokens);
         if (res && res.trim().length > 0) return res.trim();
       } catch (err) {
-        console.warn('DeepSeek API call notice:', err);
+        console.warn('DeepSeek External API fallback notice:', err);
       }
     }
 
-    // 2. Cloudflare Workers AI Edge Models (@cf/deepseek-ai/deepseek-v4-pro-0813, @cf/deepseek-ai/deepseek-v4-flash-0731)
-    const workersRes = await this.workersAiClient.generateText(messages, temperature, maxTokens, options.modelOverride);
-    if (workersRes) return workersRes.trim();
-
-    throw new Error('LLM Generation Failure: All DeepSeek AI models and API fallbacks were unavailable.');
+    throw new Error('LLM Generation Failure: All DeepSeek AI models on Cloudflare Workers AI and API fallbacks were unavailable.');
   }
 
   /**
