@@ -14,6 +14,12 @@ export interface ExtractedDocument {
 }
 
 export class UniversalTextExtractor {
+  private ai?: Ai;
+
+  constructor(ai?: Ai) {
+    this.ai = ai;
+  }
+
   /**
    * Extracts text from binary document buffer according to file extension
    */
@@ -34,19 +40,54 @@ export class UniversalTextExtractor {
   /**
    * Tiered PDF Text Extractor (Flow §4)
    * Tier 2: Pure Edge Flatedecode Stream Parser for clean structured PDFs
-   * Tier 1: Layout-aware / LlamaParse OCR Fallback for complex layouts/scans
+   * Tier 1: Cloudflare Workers AI Vision OCR Fallback for complex layouts/scans/obfuscated fonts
    */
   private async extractPdf(buffer: ArrayBuffer): Promise<ExtractedDocument> {
     const rawText = await extractTextFromPDFBuffer(buffer);
     const cleanText = cleanPrintableText(rawText);
     const quality = assessPageTextQuality(cleanText, 1);
 
+    if (cleanText && cleanText.trim().length > 0 && quality.isValid) {
+      const pages = cleanText.split('\f');
+      return {
+        text: cleanText,
+        pageCount: Math.max(1, pages.length),
+        extractionMethod: 'tier2_flatedecode_fast'
+      };
+    }
+
+    // Tier 1 Fallback: Call Cloudflare Workers AI Vision Model (@cf/meta/llama-3.2-11b-vision-instruct / moondream3.1-9B-A2B)
+    if (this.ai) {
+      try {
+        console.log('[Vision AI Executing] Reading PDF layout & OCR via Workers AI Vision Model...');
+        const uint8 = new Uint8Array(buffer);
+        const imageBytes = Array.from(uint8.slice(0, 500000));
+        
+        const response = await (this.ai as any).run('@cf/meta/llama-3.2-11b-vision-instruct', {
+          prompt: 'Extract ALL readable text from this document image in clean structured Markdown format. Include all headings, name, contact details, skills, work experience, projects, education.',
+          image: imageBytes
+        });
+
+        const extractedText = typeof response === 'string' ? response : (response?.response || response?.description || response?.text || '');
+        if (extractedText && extractedText.trim().length > 20) {
+          return {
+            text: extractedText.trim(),
+            pageCount: 1,
+            extractionMethod: 'tier1_vision_ai_llama3_2_ocr'
+          };
+        }
+      } catch (visionErr) {
+        console.warn('Workers AI Vision Model notice:', visionErr);
+      }
+    }
+
+    // Fallback: If cleanText has any text, return it
     if (cleanText && cleanText.trim().length > 0) {
       const pages = cleanText.split('\f');
       return {
         text: cleanText,
         pageCount: Math.max(1, pages.length),
-        extractionMethod: quality.isValid ? 'tier2_flatedecode_fast' : 'tier1_cMap_recovered_stream'
+        extractionMethod: 'tier1_cMap_recovered_stream'
       };
     }
 

@@ -24,6 +24,13 @@ export function isCMapFontGarbage(text: string): boolean {
   const realWordsCount = (sample.match(/\b[A-Za-z0-9\u00C0-\u1EF9]{2,}\b/g) || []).length;
   if (len >= 40 && realWordsCount < 4) return true;
 
+  // 5. Vowel ratio check for natural language text (English & Vietnamese)
+  const vowelCount = (sample.match(/[aeiouyAEIOUYàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]/g) || []).length;
+  const letterCount = (sample.match(/[a-zA-Z\u00C0-\u1EF9]/g) || []).length;
+  if (letterCount >= 25 && (vowelCount / letterCount) < 0.18) {
+    return true; // Garbled font vector tokens without real natural language words!
+  }
+
   return false;
 }
 

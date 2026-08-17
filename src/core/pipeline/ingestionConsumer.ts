@@ -29,7 +29,7 @@ export class IngestionConsumer {
     r2: R2Bucket,
     ai: Ai
   ) {
-    this.extractor = new UniversalTextExtractor();
+    this.extractor = new UniversalTextExtractor(ai);
     this.splitter = new RecursiveCharacterTextSplitter({
       chunkSizeTokens: 700,
       chunkOverlapTokens: 135
