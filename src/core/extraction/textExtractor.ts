@@ -81,13 +81,13 @@ export class UniversalTextExtractor {
       }
     }
 
-    // Fallback: If cleanText has any text, return it
-    if (cleanText && cleanText.trim().length > 0) {
-      const pages = cleanText.split('\f');
+    // Fallback: Extract clean natural language tokens if cleanText has any valid words
+    const cleanTokens = cleanText ? cleanText.match(/\b[A-Za-z0-9\u00C0-\u1EF9.,:\-@\/()]{2,}\b/g)?.join(' ') || '' : '';
+    if (cleanTokens && cleanTokens.trim().length > 30) {
       return {
-        text: cleanText,
-        pageCount: Math.max(1, pages.length),
-        extractionMethod: 'tier1_cMap_recovered_stream'
+        text: cleanTokens.trim(),
+        pageCount: 1,
+        extractionMethod: 'tier1_clean_tokens_fallback'
       };
     }
 

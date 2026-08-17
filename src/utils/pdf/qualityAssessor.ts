@@ -31,6 +31,12 @@ export function isCMapFontGarbage(text: string): boolean {
     return true; // Garbled font vector tokens without real natural language words!
   }
 
+  // 6. Check for obscure non-Latin/IPA/Combining diacritics mixed into text (e.g. ͂0, ׇ;, Ή3, ʋ0, ʍ1, Ώ6, ֑?, ɖ4, Ҟ@, ǥ8, ³8, ѹJ, 6ζ)
+  const obscureSymbols = (sample.match(/[\u0250-\u036F\u0370-\u03FF\u0400-\u04FF\u0590-\u05FF\u0600-\u06FF\u1D00-\u1EFF]/g) || []).length;
+  if (obscureSymbols >= 3) {
+    return true; // Garbled CID font vector mapping!
+  }
+
   return false;
 }
 
