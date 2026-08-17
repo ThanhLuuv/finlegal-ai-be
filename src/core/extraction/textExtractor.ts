@@ -56,36 +56,47 @@ export class UniversalTextExtractor {
       };
     }
 
-    // Tier 1 Fallback: Call Cloudflare Workers AI Vision Model (@cf/meta/llama-3.2-11b-vision-instruct / moondream3.1-9B-A2B)
+    // Tier 1 Fallback: Call Cloudflare Workers AI Vision Model (moondream3.1-9B-A2B > Llama 3.2 Vision)
     if (this.ai) {
-      try {
-        console.log('[Vision AI Executing] Reading PDF layout & OCR via Workers AI Vision Model...');
-        const uint8 = new Uint8Array(buffer);
-        const imageBytes = Array.from(uint8.slice(0, 500000));
-        
-        const response = await (this.ai as any).run('@cf/meta/llama-3.2-11b-vision-instruct', {
-          prompt: 'Extract ALL readable text from this document image in clean structured Markdown format. Include all headings, name, contact details, skills, work experience, projects, education.',
-          image: imageBytes
-        });
+      const visionModels = [
+        'moondream3.1-9B-A2B',
+        '@cf/moondream/moondream3.1-9B-A2B',
+        '@cf/meta/llama-3.2-11b-vision-instruct'
+      ];
 
-        const extractedText = typeof response === 'string' ? response : (response?.response || response?.description || response?.text || '');
-        if (extractedText && extractedText.trim().length > 20) {
-          return {
-            text: extractedText.trim(),
-            pageCount: 1,
-            extractionMethod: 'tier1_vision_ai_llama3_2_ocr'
-          };
+      const uint8 = new Uint8Array(buffer);
+      const imageBytes = Array.from(uint8.slice(0, 500000));
+
+      for (const visionModel of visionModels) {
+        try {
+          console.log(`[Vision AI Executing] Reading PDF layout & OCR via Vision Model: ${visionModel}...`);
+          const response = await (this.ai as any).run(visionModel, {
+            prompt: 'agree\nExtract ALL readable text from this document image in clean structured Markdown format. Include all headings, name, contact details, skills, work experience, projects, education.',
+            image: imageBytes
+          });
+
+          const extractedText = typeof response === 'string' ? response : (response?.response || response?.description || response?.text || '');
+          if (extractedText && extractedText.trim().length > 20) {
+            return {
+              text: extractedText.trim(),
+              pageCount: 1,
+              extractionMethod: `tier1_vision_ai_${visionModel}`
+            };
+          }
+        } catch (visionErr) {
+          console.warn(`Vision Model ${visionModel} notice:`, String(visionErr));
         }
-      } catch (visionErr) {
-        console.warn('Workers AI Vision Model notice:', visionErr);
       }
     }
 
     // Fallback: Extract clean natural language tokens if cleanText has any valid words
-    const cleanTokens = cleanText ? cleanText.match(/\b[A-Za-z0-9\u00C0-\u1EF9.,:\-@\/()]{2,}\b/g)?.join(' ') || '' : '';
-    if (cleanTokens && cleanTokens.trim().length > 30) {
+    const rawTokens = cleanText ? cleanText.match(/\b[A-Za-z0-9\u00C0-\u1EF9.,:\-@\/()]{3,}\b/g) || [] : [];
+    const validTokens = rawTokens.filter(t => !/^(Adobe|UCS|Poppins|90KSX|github|itfoundry|wVw|xnx|zFz)$/i.test(t));
+    const cleanTokens = validTokens.join(' ').trim();
+
+    if (cleanTokens && cleanTokens.length > 30) {
       return {
-        text: cleanTokens.trim(),
+        text: cleanTokens,
         pageCount: 1,
         extractionMethod: 'tier1_clean_tokens_fallback'
       };
