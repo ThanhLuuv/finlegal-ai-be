@@ -12,7 +12,7 @@ import { isCMapFontGarbage, assessPageTextQuality } from './pdf/qualityAssessor'
 export async function extractTextFromPDFBuffer(buffer: ArrayBuffer): Promise<string> {
   // Step 1: Try high-precision CMap & FlateDecode Stream Decompression
   const cmapText = extractTextWithCMapDecompression(buffer);
-  if (cmapText && cmapText.length >= 20) {
+  if (cmapText && cmapText.length >= 20 && !isCMapFontGarbage(cmapText)) {
     return cmapText;
   }
 
