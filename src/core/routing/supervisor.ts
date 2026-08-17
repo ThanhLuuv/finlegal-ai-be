@@ -44,7 +44,7 @@ Respond strictly in JSON:
 }`
         },
         { role: 'user', content: prompt }
-      ], { task: 'QUERY_REWRITE', modelOverride: 'granite-4.0-h-micro' });
+      ], { task: 'QUERY_REWRITE' });
 
       if (classification?.intent) {
         userIntent = classification.intent;
