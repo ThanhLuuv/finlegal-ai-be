@@ -204,8 +204,10 @@ export class D1DocumentRepository {
   public async saveChunks(docId: string, chunks: RagChunk[], tenantId = 'tenant_default'): Promise<void> {
     if (!chunks || chunks.length === 0) return;
 
-    for (const chunk of chunks) {
-      await this.db.prepare(
+    const statements = chunks.map((chunk, idx) => {
+      const vectorId = chunk.id;
+      const metadataStr = typeof chunk.metadata === 'string' ? chunk.metadata : JSON.stringify(chunk.metadata || {});
+      return this.db.prepare(
         `INSERT OR REPLACE INTO document_chunks 
          (id, document_id, tenant_id, section_id, parent_chunk_id, chunk_index, chunk_type, content, token_count, content_hash, embedding_version, page_start, page_end, metadata_json, vector_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -215,22 +217,34 @@ export class D1DocumentRepository {
         chunk.tenantId || tenantId,
         chunk.sectionId || null,
         chunk.parentChunkId || chunk.metadata.parentChunkId || null,
-        chunk.metadata.chunkIndex,
-        chunk.chunkType,
+        chunk.metadata.chunkIndex ?? idx,
+        chunk.chunkType || 'paragraph',
         chunk.content,
-        chunk.tokenCount,
-        chunk.contentHash,
+        chunk.tokenCount || 0,
+        chunk.contentHash || `${chunk.id}_hash`,
         chunk.embeddingVersion || 'bge-m3-v1',
         chunk.pageStart || 1,
         chunk.pageEnd || 1,
-        JSON.stringify(chunk.metadata),
-        chunk.id
-      ).run();
+        metadataStr,
+        vectorId
+      );
+    });
 
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < statements.length; i += BATCH_SIZE) {
+      const batch = statements.slice(i, i + BATCH_SIZE);
+      await this.db.batch(batch);
+    }
+    
+    const ftsStatements = chunks.map(chunk => {
+      return this.db.prepare(
+        `INSERT OR REPLACE INTO document_chunks_fts (chunk_id, document_id, content) VALUES (?, ?, ?)`
+      ).bind(chunk.id, docId, chunk.content);
+    });
+
+    for (let i = 0; i < ftsStatements.length; i += BATCH_SIZE) {
       try {
-        await this.db.prepare(
-          `INSERT OR REPLACE INTO document_chunks_fts (chunk_id, document_id, content) VALUES (?, ?, ?)`
-        ).bind(chunk.id, docId, chunk.content).run();
+        await this.db.batch(ftsStatements.slice(i, i + BATCH_SIZE));
       } catch {}
     }
   }

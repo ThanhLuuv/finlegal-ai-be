@@ -110,11 +110,12 @@ export class IngestionConsumer {
 
         await this.d1Repo.saveChunks(docId, ragChunksForD1 as any);
 
-        // Upload long chunk texts to R2 as pointers if content > 1500 chars
-        for (const c of chunks) {
-          if (c.content.length > 1500) {
-            await this.r2Repo.uploadChunkText(docId, c.id, c.content);
-          }
+        // Upload long chunk texts to R2 as pointers if content > 1500 chars in parallel batches of 20
+        const longChunks = chunks.filter(c => c.content.length > 1500);
+        const PARALLEL_BATCH = 20;
+        for (let i = 0; i < longChunks.length; i += PARALLEL_BATCH) {
+          const batch = longChunks.slice(i, i + PARALLEL_BATCH);
+          await Promise.all(batch.map(c => this.r2Repo.uploadChunkText(docId, c.id, c.content)));
         }
 
         // Step 5: Transition to INDEXING status & Upsert to Vectorize Index (`bge-m3`)
