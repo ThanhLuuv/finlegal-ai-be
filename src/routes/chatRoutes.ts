@@ -162,20 +162,45 @@ chatRoutes.post('/stream', async (c) => {
         });
         await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
 
-        // Extract keywords
-        const keywords = prompt.toLowerCase().replace(/[^\w\sÀ-ỹ0-9]/g, ' ').split(/\s+/).filter((k: string) => k.length > 1);
+        // Multi-Turn Contextual Query Rewriter
+        let searchPrompt = prompt;
+        if (history.length > 0) {
+          try {
+            const historySummary = history.slice(-4).map((h: any) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
+            const rewritten = await llm.generateText([
+              {
+                role: 'system',
+                content: 'You are an AI Query Rewriter. Convert follow-up user questions into standalone self-contained search queries in Vietnamese, resolving pronouns (anh ấy, nó, hắn, dự án đó, công ty này) using the conversation history. If already standalone, return original question unchanged. Return ONLY the rewritten query.'
+              },
+              {
+                role: 'user',
+                content: `CONVERSATION HISTORY:\n${historySummary}\n\nFOLLOW-UP QUESTION: ${prompt}`
+              }
+            ], { task: 'QUERY_REWRITE' });
+
+            if (rewritten && rewritten.trim().length > 0) {
+              searchPrompt = rewritten.trim();
+              console.log(`[Multi-Turn RAG] Rewrote follow-up "${prompt}" -> "${searchPrompt}"`);
+            }
+          } catch (err) {
+            console.warn('Contextual query rewrite notice:', err);
+          }
+        }
+
+        // Extract keywords from contextual searchPrompt
+        const keywords = searchPrompt.toLowerCase().replace(/[^\w\sÀ-ỹ0-9]/g, ' ').split(/\s+/).filter((k: string) => k.length > 1);
 
         // 1. Hybrid Retrieval (Vectorize Top 25 + D1 Sparse) -> RRF Merge
-        const candidates = await hybridRetriever.retrieveCandidates(prompt, keywords, docId, 25, 20);
+        const candidates = await hybridRetriever.retrieveCandidates(searchPrompt, keywords, docId, 25, 20);
 
         // 2. BGE Reranker -> Select Dynamic Top-K candidates (Top 4-10)
-        const dynamicTopK = hybridRetriever.determineDynamicTopK(prompt);
-        topEvidenceBlocks = await reranker.rerank(prompt, candidates, dynamicTopK);
+        const dynamicTopK = hybridRetriever.determineDynamicTopK(searchPrompt);
+        topEvidenceBlocks = await reranker.rerank(searchPrompt, candidates, dynamicTopK);
 
         state.thoughtProcess.push({
           agent: 'RAG_AGENT',
           status: 'DONE',
-          thought: `Đã dung hợp và Rerank được ${topEvidenceBlocks.length} đoạn trích dẫn chất lượng cao nhất (Dynamic Top-${dynamicTopK}).`,
+          thought: `Đã dung hợp ngữ cảnh lịch sử và Rerank được ${topEvidenceBlocks.length} đoạn trích dẫn chất lượng cao nhất (Dynamic Top-${dynamicTopK}).`,
           timestamp: Date.now()
         });
         await sendSanitizedThought(state.thoughtProcess[state.thoughtProcess.length - 1]);
@@ -184,7 +209,7 @@ chatRoutes.post('/stream', async (c) => {
       // Step 4: Grounded LLM Answer Synthesis
       if (intent === 'HYBRID_AUDIT' || intent === 'RAG_ONLY' || intent === 'SQL_ONLY') {
         const sqlData = state.sqlResult || state.sqlData;
-        const result = await synthesizer.synthesize(prompt, topEvidenceBlocks, intent, sqlData);
+        const result = await synthesizer.synthesize(prompt, topEvidenceBlocks, intent, sqlData, history);
 
         state.finalAnswer = result.answer;
         state.citations = result.citations;
@@ -193,11 +218,16 @@ chatRoutes.post('/stream', async (c) => {
         }
       } else {
         // General Chat
+        const historyMsgs = history.slice(-6).map((h: any) => ({
+          role: h.role === 'user' ? ('user' as const) : ('assistant' as const),
+          content: h.content
+        }));
         const generalReply = await llm.generateText([
           {
             role: 'system',
             content: 'Bạn là Trợ lý AI Lexifin chuyên phân tích Hợp đồng và Đối soát Số liệu Bán hàng Doanh nghiệp. Bạn BẮT BUỘC phải trả lời bằng Tiếng Việt 100%, lịch sự, chuyên nghiệp và ngắn gọn.'
           },
+          ...historyMsgs,
           { role: 'user', content: prompt }
         ]);
         state.finalAnswer = generalReply;

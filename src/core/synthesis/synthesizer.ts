@@ -19,7 +19,8 @@ export class GroundedSynthesizer {
     userPrompt: string,
     evidenceBlocks: RetrievedEvidenceCandidate[],
     intent = 'RAG_ONLY',
-    sqlData?: any
+    sqlData?: any,
+    history: any[] = []
   ): Promise<GroundedSynthesisResult> {
     const hasEvidence = evidenceBlocks && evidenceBlocks.length > 0;
     const hasSqlData = sqlData && ((Array.isArray(sqlData) && sqlData.length > 0) || typeof sqlData === 'object');
@@ -44,14 +45,21 @@ export class GroundedSynthesizer {
       ? JSON.stringify(sqlData, null, 2)
       : 'Không có dữ liệu SQL D1.';
 
+    // Format recent chat history (last 4 turns)
+    let historyContext = '';
+    if (Array.isArray(history) && history.length > 0) {
+      const recentHistory = history.slice(-4);
+      historyContext = '\n<recent_chat_history>\n' + recentHistory.map((h: any) => `${h.role === 'user' ? 'Người dùng' : 'Lexifin AI'}: ${h.content}`).join('\n') + '\n</recent_chat_history>\n\n';
+    }
+
     const systemPrompt = `You are Lexifin's Senior Evidence Synthesizer & Compliance Auditor.
 GROUNDING & CITATION GUARDRAIL RULES:
 1. Respond 100% in Vietnamese, professionally, accurately, and neatly in Markdown.
-2. Synthesize answer EXCLUSIVELY based on the provided Evidence Blocks [E1], [E2]... inside <document_evidence> and SQL Data.
+2. Synthesize answer EXCLUSIVELY based on the provided Evidence Blocks [E1], [E2]... inside <document_evidence> and SQL Data. Maintain context continuity with <recent_chat_history> if present.
 3. Every claim MUST be directly cited using exact Evidence ID tags (e.g. "[E1]", "[E2]").
 4. For candidate CVs or contract reviews, summarize clearly: Thông tin cá nhân, Kỹ năng, Kinh nghiệm làm việc, Dự án tiêu biểu, Điều khoản phạt/bảo hành/thanh toán.`;
 
-    const userMsg = `CÂU HỎI NGƯỜI DÙNG:\n${userPrompt}\n\n<document_evidence>\n${formattedBlocks}\n</document_evidence>\n\nSQL D1 DATA:\n${sqlStr}`;
+    const userMsg = `${historyContext}CÂU HỎI NGƯỜI DÙNG:\n${userPrompt}\n\n<document_evidence>\n${formattedBlocks}\n</document_evidence>\n\nSQL D1 DATA:\n${sqlStr}`;
 
     let rawAnswer = await this.llm.generateText([
       { role: 'system', content: systemPrompt },
