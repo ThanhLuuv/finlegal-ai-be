@@ -13,7 +13,8 @@
     "fflate": "^0.8.3",
     "hono": "^4.5.3",
     "langfuse": "^3.19.0",
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^1.1.1",
+    "unpdf": "^1.7.0"
   },
   "devDependencies": {
     "typescript": "^5.4.5",
