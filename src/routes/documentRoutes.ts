@@ -70,7 +70,14 @@ Hợp đồng này được lập thành 04 bản có giá trị pháp lý như 
       pdfBuffer = generatePdfBufferFromText('Hợp đồng mua bán hàng hóa mẫu', sampleContractContent);
     }
 
-    const consumer = new IngestionConsumer(c.env.DB, c.env.VECTORIZE, c.env.R2, c.env.AI);
+    const consumer = new IngestionConsumer(
+      c.env.DB, 
+      c.env.VECTORIZE, 
+      c.env.R2, 
+      c.env.AI, 
+      (c.env as any).DOCUMENT_SERVICE_URL, 
+      (c.env as any).SERVICE_SECRET_TOKEN
+    );
     await consumer.processIngestionJob(docId, fileName, pdfBuffer);
 
     try {
@@ -280,7 +287,14 @@ documentRoutes.post('/', async (c) => {
     const docId = `doc_${Date.now()}`;
     const r2Repo = new R2DocumentRepository(c.env.R2);
     const d1Repo = new D1DocumentRepository(c.env.DB);
-    const consumer = new IngestionConsumer(c.env.DB, c.env.VECTORIZE, c.env.R2, c.env.AI);
+    const consumer = new IngestionConsumer(
+      c.env.DB, 
+      c.env.VECTORIZE, 
+      c.env.R2, 
+      c.env.AI, 
+      (c.env as any).DOCUMENT_SERVICE_URL, 
+      (c.env as any).SERVICE_SECRET_TOKEN
+    );
 
     // Step 1: Save raw original file to R2 & Initial D1 record with UPLOADED status
     const r2Key = await r2Repo.uploadDocument(docId, fileName, arrayBuffer);
@@ -349,7 +363,14 @@ documentRoutes.post('/:docId/version', async (c) => {
     }
 
     const newDocId = `doc_${Date.now()}`;
-    const consumer = new IngestionConsumer(c.env.DB, c.env.VECTORIZE, c.env.R2, c.env.AI);
+    const consumer = new IngestionConsumer(
+      c.env.DB, 
+      c.env.VECTORIZE, 
+      c.env.R2, 
+      c.env.AI, 
+      (c.env as any).DOCUMENT_SERVICE_URL, 
+      (c.env as any).SERVICE_SECRET_TOKEN
+    );
 
     const result = await consumer.processIngestionJob(newDocId, fileName, arrayBuffer, {
       version: nextVersion,
@@ -402,7 +423,14 @@ documentRoutes.post('/:docId/reparse', async (c) => {
     await c.env.DB.prepare('DELETE FROM document_chunks WHERE document_id = ?').bind(docId).run();
     await c.env.DB.prepare('DELETE FROM document_sections WHERE document_id = ?').bind(docId).run();
 
-    const consumer = new IngestionConsumer(c.env.DB, c.env.VECTORIZE, c.env.R2, c.env.AI);
+    const consumer = new IngestionConsumer(
+      c.env.DB, 
+      c.env.VECTORIZE, 
+      c.env.R2, 
+      c.env.AI, 
+      (c.env as any).DOCUMENT_SERVICE_URL, 
+      (c.env as any).SERVICE_SECRET_TOKEN
+    );
     const result = await consumer.processIngestionJob(docId, doc.file_name, arrayBuffer);
 
     return c.json({

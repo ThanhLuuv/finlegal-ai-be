@@ -7,6 +7,8 @@ import {
   assessPageTextQuality 
 } from '../../utils/pdfExtractor';
 
+import { DocumentServiceClient } from './extractionClient';
+
 export interface ExtractedDocument {
   text: string;
   pageCount: number;
@@ -15,15 +17,29 @@ export interface ExtractedDocument {
 
 export class UniversalTextExtractor {
   private ai?: Ai;
+  private serviceClient?: DocumentServiceClient;
 
-  constructor(ai?: Ai) {
+  constructor(ai?: Ai, serviceClient?: DocumentServiceClient) {
     this.ai = ai;
+    this.serviceClient = serviceClient;
   }
 
   /**
    * Extracts text from binary document buffer according to file extension
    */
-  public async extract(buffer: ArrayBuffer, fileName: string): Promise<ExtractedDocument> {
+  public async extract(buffer: ArrayBuffer, fileName: string, documentId: string = 'doc_transient'): Promise<ExtractedDocument> {
+    // Step 1: Try Cloud Run Python Document Processing Service if configured
+    if (this.serviceClient && this.serviceClient.isConfigured()) {
+      const remoteParsed = await this.serviceClient.extractFromFile(documentId, buffer, fileName);
+      if (remoteParsed && remoteParsed.fullText && remoteParsed.fullText.trim().length > 0) {
+        return {
+          text: remoteParsed.fullText,
+          pageCount: remoteParsed.metadata.pageCount || 1,
+          extractionMethod: `cloud_run_service_${Object.keys(remoteParsed.metadata.methodsUsed || {})[0] || 'pymupdf'}`
+        };
+      }
+    }
+
     const ext = fileName.split('.').pop()?.toLowerCase() || '';
 
     if (ext === 'pdf') {

@@ -16,6 +16,8 @@ export interface IngestionJobResult {
   message: string;
 }
 
+import { DocumentServiceClient } from '../extraction/extractionClient';
+
 export class IngestionConsumer {
   private extractor: UniversalTextExtractor;
   private splitter: RecursiveCharacterTextSplitter;
@@ -27,9 +29,12 @@ export class IngestionConsumer {
     db: D1Database,
     vectorize: VectorizeIndex,
     r2: R2Bucket,
-    ai: Ai
+    ai: Ai,
+    serviceUrl?: string,
+    secretToken?: string
   ) {
-    this.extractor = new UniversalTextExtractor(ai);
+    const serviceClient = new DocumentServiceClient(serviceUrl, secretToken);
+    this.extractor = new UniversalTextExtractor(ai, serviceClient);
     this.splitter = new RecursiveCharacterTextSplitter({
       chunkSizeTokens: 700,
       chunkOverlapTokens: 135

@@ -22,6 +22,8 @@ export interface Bindings {
   LANGFUSE_HOST?: string;
   TURNSTILE_SECRET_KEY?: string;
   ADMIN_SECRET_KEY?: string;
+  DOCUMENT_SERVICE_URL?: string;
+  SERVICE_SECRET_TOKEN?: string;
 }
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -111,7 +113,14 @@ import { IngestionConsumer } from './core/pipeline/ingestionConsumer';
 export default {
   fetch: app.fetch,
   async queue(batch: MessageBatch<any>, env: Bindings): Promise<void> {
-    const consumer = new IngestionConsumer(env.DB, env.VECTORIZE, env.R2, env.AI);
+    const consumer = new IngestionConsumer(
+      env.DB, 
+      env.VECTORIZE, 
+      env.R2, 
+      env.AI, 
+      env.DOCUMENT_SERVICE_URL, 
+      env.SERVICE_SECRET_TOKEN
+    );
     for (const message of batch.messages) {
       try {
         const { docId, fileName, r2Key, options } = message.body as {
