@@ -56,16 +56,15 @@ export class UniversalTextExtractor {
       };
     }
 
-    // Tier 1 Fallback: Call Cloudflare Workers AI Vision Model (moondream3.1-9B-A2B > Llama 3.2 Vision)
+    // Tier 1 Fallback: Call Cloudflare Workers AI Vision Model (@cf/moondream/moondream3.1-9B-A2B)
     if (this.ai) {
       const visionModels = [
-        'moondream3.1-9B-A2B',
         '@cf/moondream/moondream3.1-9B-A2B',
         '@cf/meta/llama-3.2-11b-vision-instruct'
       ];
 
-      const uint8 = new Uint8Array(buffer);
-      const imageBytes = Array.from(uint8.slice(0, 500000));
+      const uint8 = new Uint8Array(buffer.slice(0, 400000));
+      const imageBytes = Array.from(uint8).map(b => Number(b));
 
       for (const visionModel of visionModels) {
         try {
