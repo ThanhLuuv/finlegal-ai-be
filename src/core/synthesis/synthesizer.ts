@@ -21,9 +21,12 @@ export class GroundedSynthesizer {
     intent = 'RAG_ONLY',
     sqlData?: any
   ): Promise<GroundedSynthesisResult> {
-    if (!evidenceBlocks || evidenceBlocks.length === 0) {
+    const hasEvidence = evidenceBlocks && evidenceBlocks.length > 0;
+    const hasSqlData = sqlData && ((Array.isArray(sqlData) && sqlData.length > 0) || typeof sqlData === 'object');
+
+    if (!hasEvidence && !hasSqlData && intent !== 'GENERAL_CHAT') {
       return {
-        answer: `⚠️ **Thông báo Lexifin**: Không tìm thấy đoạn trích dẫn phù hợp trong tài liệu để trả lời câu hỏi của bạn. Vui lòng kiểm tra lại câu hỏi hoặc chọn đúng tập tin văn bản!`,
+        answer: `**Thông báo Lexifin**: Không tìm thấy đoạn trích dẫn phù hợp trong tài liệu hoặc dữ liệu SQL để trả lời câu hỏi của bạn. Vui lòng kiểm tra lại câu hỏi!`,
         citations: []
       };
     }
