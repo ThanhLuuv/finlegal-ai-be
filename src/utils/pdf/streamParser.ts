@@ -18,15 +18,21 @@ export function cleanPrintableText(text: string): string {
 }
 
 function findSequence(bytes: Uint8Array, seq: number[], start: number): number {
-  for (let i = start; i <= bytes.length - seq.length; i++) {
+  if (!bytes || start >= bytes.length) return -1;
+  const firstByte = seq[0];
+  let pos = start;
+  while (pos <= bytes.length - seq.length) {
+    pos = bytes.indexOf(firstByte, pos);
+    if (pos === -1 || pos > bytes.length - seq.length) return -1;
     let found = true;
-    for (let j = 0; j < seq.length; j++) {
-      if (bytes[i + j] !== seq[j]) {
+    for (let j = 1; j < seq.length; j++) {
+      if (bytes[pos + j] !== seq[j]) {
         found = false;
         break;
       }
     }
-    if (found) return i;
+    if (found) return pos;
+    pos++;
   }
   return -1;
 }

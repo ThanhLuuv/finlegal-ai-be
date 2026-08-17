@@ -76,7 +76,7 @@ export class IngestionConsumer {
       try {
         // Step 2: Transition to PARSING status & Extract Text
         await this.d1Repo.updateStatus(docId, 'PARSING', { retryCount });
-        const extracted = await this.extractor.extract(buffer, fileName);
+        const extracted = await this.extractor.extract(buffer, fileName, docId);
 
         // Step 3: Transition to CHUNKING status & Recursive Character Splitting
         await this.d1Repo.updateStatus(docId, 'CHUNKING', { totalPages: extracted.pageCount, retryCount });
