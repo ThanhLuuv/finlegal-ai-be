@@ -41,19 +41,19 @@ export class UniversalTextExtractor {
     const cleanText = cleanPrintableText(rawText);
     const quality = assessPageTextQuality(cleanText, 1);
 
-    if (!cleanText || cleanText.trim().length === 0 || !quality.isValid) {
+    if (cleanText && cleanText.trim().length > 0) {
+      const pages = cleanText.split('\f');
       return {
-        text: `[Tài liệu PDF Scan / Bảng biểu phức tạp (${buffer.byteLength} bytes) - Đã dùng LlamaParse OCR trích xuất layout]`,
-        pageCount: 1,
-        extractionMethod: 'tier1_llamaparse_ocr_fallback'
+        text: cleanText,
+        pageCount: Math.max(1, pages.length),
+        extractionMethod: quality.isValid ? 'tier2_flatedecode_fast' : 'tier1_cMap_recovered_stream'
       };
     }
 
-    const pages = cleanText.split('\f');
     return {
-      text: cleanText,
-      pageCount: Math.max(1, pages.length),
-      extractionMethod: quality.score >= 80 ? 'tier2_pymupdf_flatedecode_fast' : 'tier1_layout_aware_parser'
+      text: `[Tài liệu PDF Scan / Bảng biểu phức tạp (${buffer.byteLength} bytes)]`,
+      pageCount: 1,
+      extractionMethod: 'tier1_fallback'
     };
   }
 

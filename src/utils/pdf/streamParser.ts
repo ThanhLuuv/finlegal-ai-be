@@ -133,27 +133,51 @@ export function extractTextWithCMapDecompression(buffer: ArrayBuffer): string {
             continue;
           }
 
-          const tjMatches = block.match(/\[([\s\S]*?)\]\s*TJ/g) || [];
+          const tjMatches = block.match(/\[([\s\S]*?)\]\s*T[jJ]|<([0-9a-fA-F]+)>\s*T[jJ]|\(([^()]+)\)\s*T[jJ]/g) || [];
           for (const tj of tjMatches) {
+            // 1. Extract Parenthesized ASCII strings: (LUU VAN THANH) Tj
+            const parenMatches = tj.match(/\(([^()]+)\)/g) || [];
+            for (const p of parenMatches) {
+              const textStr = p.slice(1, -1);
+              if (textStr && textStr.trim().length > 0) {
+                fullDecodedText += textStr + ' ';
+              }
+            }
+
+            // 2. Extract Hex strings: <004C00550055...> TJ
             const hexes = tj.match(/<([0-9a-fA-F]+)>/g) || [];
             for (const h of hexes) {
               const cleanHex = h.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
-              for (let k = 0; k < cleanHex.length; k += 2) {
-                const pair = cleanHex.substring(k, k + 2);
-                if (currentCMap && currentCMap.has(pair)) {
-                  fullDecodedText += currentCMap.get(pair);
+              
+              if (cleanHex.length % 4 === 0 && cleanHex.length >= 4) {
+                // UTF-16BE 4-hex encoding
+                for (let k = 0; k < cleanHex.length; k += 4) {
+                  const quad = cleanHex.substring(k, k + 4);
+                  if (currentCMap && currentCMap.has(quad)) {
+                    fullDecodedText += currentCMap.get(quad);
+                  } else {
+                    const code = parseInt(quad, 16);
+                    if (code >= 32 && code <= 65533 && code !== 65534) {
+                      fullDecodedText += String.fromCharCode(code);
+                    }
+                  }
+                }
+              } else {
+                // 2-hex encoding
+                for (let k = 0; k < cleanHex.length; k += 2) {
+                  const pair = cleanHex.substring(k, k + 2);
+                  if (currentCMap && currentCMap.has(pair)) {
+                    fullDecodedText += currentCMap.get(pair);
+                  } else {
+                    const code = parseInt(pair, 16);
+                    if (code >= 32 && code <= 126) {
+                      fullDecodedText += String.fromCharCode(code);
+                    }
+                  }
                 }
               }
             }
             fullDecodedText += ' ';
-          }
-
-          const singleTjMatches = block.match(/\(([^()]+)\)\s*T[jJ]/g) || [];
-          for (const tj of singleTjMatches) {
-            const m = tj.match(/\(([^()]+)\)/);
-            if (m && m[1]) {
-              fullDecodedText += m[1] + ' ';
-            }
           }
         }
       }
