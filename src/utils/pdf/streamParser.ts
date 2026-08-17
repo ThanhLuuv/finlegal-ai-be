@@ -1,6 +1,7 @@
 // Pure JS FlateDecode & CMap Stream Parser (100% Workers V8 Isolate Compatible)
 
 import { decompressSync } from 'fflate';
+import { isCMapFontGarbage } from './qualityAssessor';
 
 export function cleanPrintableText(text: string): string {
   if (!text) return '';
@@ -186,7 +187,7 @@ export function extractTextWithCMapDecompression(buffer: ArrayBuffer): string {
     let cleanCMapText = fullDecodedText.replace(/\s+/g, ' ').trim();
     cleanCMapText = cleanCMapText.replace(/\b([A-Za-z0-9])\s+(?=[A-Za-z0-9]\b)/g, '$1');
 
-    if (cleanCMapText.length >= 20) {
+    if (cleanCMapText.length >= 20 && !isCMapFontGarbage(cleanCMapText)) {
       return cleanPrintableText(cleanCMapText);
     }
 
@@ -202,7 +203,23 @@ export function extractTextWithCMapDecompression(buffer: ArrayBuffer): string {
       }
     }
 
-    return cleanPrintableText(fallbackText);
+    const cleanFallback = cleanPrintableText(fallbackText);
+    if (cleanFallback.length >= 20) {
+      return cleanFallback;
+    }
+
+    // Step 4: Full binary text extraction (Extract all readable text tokens)
+    let rawBinaryText = '';
+    for (const streamText of decompressedStreams) {
+      const tokens = streamText.match(/[a-zA-Z0-9\u00C0-\u1EF9.,:\-@\/()]{2,}/g) || [];
+      for (const token of tokens) {
+        if (!/^(Filter|FlateDecode|Length|Stream|Endstream|Obj|Endobj|Font|Type|Subtype|Widths|CMap)$/i.test(token)) {
+          rawBinaryText += token + ' ';
+        }
+      }
+    }
+
+    return cleanPrintableText(rawBinaryText);
   } catch (err) {
     console.warn('PDF stream extraction error:', err);
     return '';
