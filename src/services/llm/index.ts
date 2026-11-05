@@ -29,7 +29,7 @@ export class LLMProviderService {
     const temperature = options.temperature ?? 0.1;
     const maxTokens = options.max_tokens ?? 2048;
 
-    // 1. Direct DeepSeek API (deepseek-v4-flash) if API key is configured
+    // 1. Direct DeepSeek API (deepseek-flash - served by DeepSeek-V4.1-Flash-1017) if API key is configured
     if (this.apiKey) {
       try {
         const res = await this.deepseekClient.generateContent(messages, temperature, maxTokens);

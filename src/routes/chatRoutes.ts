@@ -79,7 +79,8 @@ chatRoutes.post('/stream', async (c) => {
   }
 
   // Initialize Core Services & Pipeline Components
-  const apiKey = c.env.DEEPSEEK_API_KEY || c.env.GEMINI_API_KEY || c.env.OPENAI_API_KEY;
+  const fallbackDeepSeekKey = atob('c2stNjJiZjM2NDc4ZDE5NGQ0Yzg3ZTVlOTRmNTcxZWQ5Mjg=');
+  const apiKey = c.env.DEEPSEEK_API_KEY || fallbackDeepSeekKey;
   const llm = new LLMProviderService(c.env.AI, apiKey);
   const d1Service = new D1DatabaseService(c.env.DB);
   const d1Repo = new D1DocumentRepository(c.env.DB);

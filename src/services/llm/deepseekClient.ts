@@ -1,4 +1,4 @@
-// Direct DeepSeek REST API Client (DeepSeek-V3 / DeepSeek-R1 API Client)
+// Direct DeepSeek REST API Client (DeepSeek-V4.1-Flash / DeepSeek-V4-Pro API Client)
 
 import { LLMMessage } from './types';
 
@@ -12,7 +12,8 @@ export class DeepSeekClient {
   public async generateContent(messages: LLMMessage[], temperature = 0.1, maxTokens = 2048): Promise<string | null> {
     if (!this.apiKey) return null;
 
-    const deepseekModels = ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'];
+    // Per DeepSeek API docs: deepseek-flash is served by DeepSeek-V4.1-Flash-1017
+    const deepseekModels = ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'];
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
 
     for (const modelName of deepseekModels) {
@@ -34,11 +35,14 @@ export class DeepSeekClient {
 
         if (res.ok) {
           const data = await res.json() as any;
-          const text = data.choices?.[0]?.message?.content;
+          const text = data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content;
           if (text && text.trim().length > 0) {
             console.log(`[Direct DeepSeek API Success] Model ${modelName} returned ${text.length} chars.`);
             return text.trim();
           }
+        } else {
+          const errBody = await res.text();
+          console.warn(`Direct DeepSeek API model ${modelName} responded ${res.status}:`, errBody);
         }
       } catch (err) {
         console.warn(`Direct DeepSeek API model ${modelName} notice:`, err);
