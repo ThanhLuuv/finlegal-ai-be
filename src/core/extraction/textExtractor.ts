@@ -4,7 +4,8 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { 
   extractTextFromPDFBuffer, 
   cleanPrintableText, 
-  assessPageTextQuality 
+  assessPageTextQuality,
+  isCMapFontGarbage 
 } from '../../utils/pdfExtractor';
 
 import { DocumentServiceClient } from './extractionClient';
@@ -68,7 +69,7 @@ export class UniversalTextExtractor {
       return {
         text: cleanText,
         pageCount: Math.max(1, pages.length),
-        extractionMethod: 'tier2_flatedecode_fast'
+        extractionMethod: 'tier2_unpdf_edge'
       };
     }
 
@@ -109,7 +110,7 @@ export class UniversalTextExtractor {
     const validTokens = rawTokens.filter(t => !/^(Adobe|UCS|Poppins|90KSX|github|itfoundry|wVw|xnx|zFz)$/i.test(t));
     const cleanTokens = validTokens.join(' ').trim();
 
-    if (cleanTokens && cleanTokens.length > 30) {
+    if (cleanTokens && cleanTokens.length > 30 && !isCMapFontGarbage(cleanTokens)) {
       return {
         text: cleanTokens,
         pageCount: 1,

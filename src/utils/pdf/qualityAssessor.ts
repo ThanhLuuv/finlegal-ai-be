@@ -12,24 +12,41 @@ export function isCMapFontGarbage(text: string): boolean {
     return true; // 100% Font Vector Stream Garbage!
   }
 
-  // 2. High ratio of single-character tokens separated by spaces (e.g. "u u v>v v wVw x xnx y*y y zFz")
+  // 2. High ratio of mixed alphanumeric tokens (e.g. cD5cB5Q3, oZkF9O2, ePtH7, XGjE8O2, pB0qD3, QBzO@dA4P2)
+  const tokens = sample.split(/\s+/).filter(t => t.length > 0);
+  if (tokens.length >= 8) {
+    const mixedAlphaNum = tokens.filter(t => /(?:[a-zA-Z]+[0-9]+|[0-9]+[a-zA-Z]+)/.test(t));
+    if ((mixedAlphaNum.length / tokens.length) > 0.12) {
+      return true; // Corrupted glyph identifiers / font subset tokens!
+    }
+
+    // High ratio of unnatural internal CamelCase tokens (e.g. jinWWZ, eVuM, YHsOBI, hWdB7gF)
+    const unnaturalInternalCaps = tokens.filter(t => /^[a-z]+[A-Z]+/.test(t) || /[a-z]+[A-Z]+[a-z]+[A-Z]+/.test(t));
+    if ((unnaturalInternalCaps.length / tokens.length) > 0.15) {
+      return true; // Corrupted internal glyph case tokens!
+    }
+  }
+
+  // 3. High ratio of single-character tokens separated by spaces (e.g. "u u v>v v wVw x xnx y*y y zFz")
   const singleCharTokens = (sample.match(/(?:^|\s)[A-Za-z0-9$%&/+*:;\-.](?=\s|$)/g) || []).length;
-  const totalTokens = Math.max(1, sample.split(/\s+/).length);
+  const totalTokens = Math.max(1, tokens.length);
   if ((singleCharTokens / totalTokens) > 0.22) {
     return true; // Single-character CID font unpacking garbage!
   }
 
-  // 3. Count real natural language words (excluding font metadata strings like Adobe, Poppins, itfoundry)
+  // 4. Count real natural language words (excluding font metadata strings like Adobe, Poppins, itfoundry)
   const cleanSample = sample
     .replace(/https?:\/\/[^\s]+/gi, '')
     .replace(/\b(Adobe|UCS|Poppins|itfoundry|90KSX|EaV)\b/gi, '');
   
-  const realWords = cleanSample.match(/\b[A-Za-z0-9\u00C0-\u1EF9]{3,}\b/g) || [];
-  if (realWords.length < 6) {
-    return true; // Insufficient natural language words
+  // Real words must have vowels (Vietnamese or Latin vowels) and not be random consonant clumps
+  const realWords = cleanSample.match(/\b[A-Za-z\u00C0-\u1EF9]{2,}\b/g) || [];
+  const validVowelWords = realWords.filter(w => /[aeiouy\u00C0-\u1EF9]/i.test(w));
+  if (validVowelWords.length < 5) {
+    return true; // Insufficient natural language words with valid vowels
   }
 
-  // 4. Unprintable control characters check
+  // 5. Unprintable control characters check
   const unprintableCount = (sample.match(/[\x00-\x08\x0E-\x1F\x7F-\x9F\uFFFD]/g) || []).length;
   if ((unprintableCount / Math.max(1, sample.length)) > 0.08) {
     return true;
