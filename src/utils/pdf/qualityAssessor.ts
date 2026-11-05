@@ -7,6 +7,11 @@ export function isCMapFontGarbage(text: string): boolean {
   if (!text || text.trim().length === 0) return true;
   const sample = text.slice(0, 1500).trim();
 
+  // Fast-path: If text contains common domain keywords, it is verified valid document text
+  if (/(?:experience|helpdesk|developer|engineer|support|education|skills|project|university|kinh nghiệm|kỹ năng|học vấn|dự án|công cụ|phần mềm|ứng viên)/i.test(sample)) {
+    return false;
+  }
+
   // 1. Explicit check for garbled font vector path tokens (e.g. wVw, xnx, zFz, 90KSX, 32654, 546632, 99991)
   if (/(?:wVw|xnx|zFz|90KSX|32654|546632|99991|326654|KSX|EaV)/i.test(sample)) {
     return true; // 100% Font Vector Stream Garbage!

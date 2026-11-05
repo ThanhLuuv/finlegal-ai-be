@@ -69,7 +69,7 @@ export class UniversalTextExtractor {
       return {
         text: cleanText,
         pageCount: Math.max(1, pages.length),
-        extractionMethod: 'tier2_unpdf_edge'
+        extractionMethod: 'universal_stream_parser'
       };
     }
 
