@@ -4,7 +4,7 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { 
   extractTextFromPDFBuffer, 
   cleanPrintableText, 
-  assessPageTextQuality 
+  assessPageTextQuality
 } from '../../utils/pdfExtractor';
 
 import { DocumentServiceClient } from './extractionClient';
