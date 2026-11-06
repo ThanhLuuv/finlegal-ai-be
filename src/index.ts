@@ -1,7 +1,8 @@
-// Lexifin Engine - Hono.js Engine on Cloudflare Workers
+// FinLegal Engine - Hono.js Engine on Cloudflare Workers
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { ASSISTANT_NAME } from './core/identity';
 
 import { adminRoutes } from './routes/adminRoutes';
 import { documentRoutes } from './routes/documentRoutes';
@@ -89,7 +90,7 @@ app.use('*', async (c, next) => {
 app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
-    service: 'Lexifin Workers Engine',
+    service: `${ASSISTANT_NAME} Workers Engine`,
     timestamp: new Date().toISOString()
   });
 });

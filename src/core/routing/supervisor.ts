@@ -2,6 +2,7 @@
 
 import { LLMProviderService } from '../../services/llm';
 import { MultiAgentState, UserIntent } from '../types';
+import { ASSISTANT_NAME } from '../identity';
 
 export class SupervisorRouter {
   private llm: LLMProviderService;
@@ -27,7 +28,7 @@ export class SupervisorRouter {
       }>([
         {
           role: 'system',
-          content: `You are DeepSeek Supervisor Router for Lexifin Legal RAG System.
+          content: `You are DeepSeek Supervisor Router for ${ASSISTANT_NAME} Legal RAG System.
 Target Selected Document ID: ${state.selectedDocId || 'NONE'}
 
 Analyze the user prompt semantically and classify intent into exactly ONE category:

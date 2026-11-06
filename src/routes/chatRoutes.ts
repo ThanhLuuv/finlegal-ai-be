@@ -15,6 +15,7 @@ import { LangfuseLogger } from '../utils/langfuse';
 import { HybridRetriever } from '../core/retrieval/hybridRetriever';
 import { BgeReranker } from '../core/retrieval/bgeReranker';
 import { GroundedSynthesizer } from '../core/synthesis/synthesizer';
+import { GENERAL_CHAT_SYSTEM_PROMPT } from '../core/identity';
 
 export const chatRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -226,7 +227,7 @@ chatRoutes.post('/stream', async (c) => {
         const generalReply = await llm.generateText([
           {
             role: 'system',
-            content: 'Bạn là Trợ lý AI Lexifin chuyên phân tích Hợp đồng và Đối soát Số liệu Bán hàng Doanh nghiệp. Bạn BẮT BUỘC phải trả lời bằng Tiếng Việt 100%, lịch sự, chuyên nghiệp và ngắn gọn.'
+            content: GENERAL_CHAT_SYSTEM_PROMPT
           },
           ...historyMsgs,
           { role: 'user', content: prompt }

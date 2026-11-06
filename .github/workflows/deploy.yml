@@ -1,4 +1,4 @@
-name: Deploy Lexifin Backend Worker
+name: Deploy FinLegal Backend Worker
 
 on:
   push:

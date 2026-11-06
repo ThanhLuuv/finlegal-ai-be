@@ -4,6 +4,7 @@ import { LLMProviderService } from '../../services/llm';
 import { RetrievedEvidenceCandidate } from '../retrieval/hybridRetriever';
 import { CitationValidator } from './citationValidator';
 import { Citation, GroundedSynthesisResult } from '../types';
+import { ASSISTANT_IDENTITY, ASSISTANT_NAME } from '../identity';
 
 export class GroundedSynthesizer {
   private llm: LLMProviderService;
@@ -27,7 +28,7 @@ export class GroundedSynthesizer {
 
     if (!hasEvidence && !hasSqlData && intent !== 'GENERAL_CHAT') {
       return {
-        answer: `**Thông báo Lexifin**: Không tìm thấy đoạn trích dẫn phù hợp trong tài liệu hoặc dữ liệu SQL để trả lời câu hỏi của bạn. Vui lòng kiểm tra lại câu hỏi!`,
+        answer: `**Thông báo ${ASSISTANT_NAME}**: Không tìm thấy đoạn trích dẫn phù hợp trong tài liệu hoặc dữ liệu SQL để trả lời câu hỏi của bạn. Vui lòng kiểm tra lại câu hỏi!`,
         citations: []
       };
     }
@@ -49,10 +50,11 @@ export class GroundedSynthesizer {
     let historyContext = '';
     if (Array.isArray(history) && history.length > 0) {
       const recentHistory = history.slice(-4);
-      historyContext = '\n<recent_chat_history>\n' + recentHistory.map((h: any) => `${h.role === 'user' ? 'Người dùng' : 'Lexifin AI'}: ${h.content}`).join('\n') + '\n</recent_chat_history>\n\n';
+      historyContext = '\n<recent_chat_history>\n' + recentHistory.map((h: any) => `${h.role === 'user' ? 'Người dùng' : ASSISTANT_NAME}: ${h.content}`).join('\n') + '\n</recent_chat_history>\n\n';
     }
 
-    const systemPrompt = `You are Lexifin's Senior Evidence Synthesizer & Compliance Auditor.
+    const systemPrompt = `${ASSISTANT_IDENTITY}
+You are ${ASSISTANT_NAME}'s Senior Evidence Synthesizer & Compliance Auditor.
 GROUNDING & CITATION GUARDRAIL RULES:
 1. Respond 100% in Vietnamese, professionally, accurately, and neatly in Markdown.
 2. Synthesize answer EXCLUSIVELY based on the provided Evidence Blocks [E1], [E2]... inside <document_evidence> and SQL Data. Maintain context continuity with <recent_chat_history> if present.
