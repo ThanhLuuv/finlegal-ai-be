@@ -1,6 +1,7 @@
 // Cloudflare D1 Document Repository (Document Lifecycle & Hierarchy Persistence)
 
 import { ParsedDocument, RagChunk, ProcessingStatus } from '../core/types';
+import { DEMO_LIMITS, DemoLimitError } from '../core/demoLimits';
 
 export interface CreateDocumentRecordOptions {
   docId: string;
@@ -92,10 +93,15 @@ export class D1DocumentRepository {
       key = r2Key || `documents/${docId}/original.pdf`;
     }
 
-    await this.db.prepare(
+    const inserted = await this.db.prepare(
       `INSERT OR IGNORE INTO document_records (doc_id, file_name, r2_key, tenant_id, user_id, version, is_active, parent_doc_id, total_pages, total_chunks, processing_status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, 1, 0, 'UPLOADED', ?)`
-    ).bind(docId, name, key, tenantId, userId, version, parentDocId, new Date().toISOString()).run();
+       SELECT ?, ?, ?, ?, ?, ?, 1, ?, 1, 0, 'UPLOADED', ?
+       WHERE (SELECT COUNT(*) FROM document_records WHERE COALESCE(is_active, 1) = 1) < ?`
+    ).bind(docId, name, key, tenantId, userId, version, parentDocId, new Date().toISOString(), DEMO_LIMITS.maxDocuments).run();
+    if (!inserted.meta.changes) {
+      const existing = await this.db.prepare('SELECT doc_id FROM document_records WHERE doc_id = ? AND COALESCE(is_active, 1) = 1').bind(docId).first();
+      if (!existing) throw new DemoLimitError('Kho demo chỉ lưu tối đa 3 tài liệu đang hoạt động. Vui lòng xóa bớt tài liệu trước khi tải file mới.', 429);
+    }
   }
 
   /**

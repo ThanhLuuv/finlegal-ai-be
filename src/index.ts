@@ -3,6 +3,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { ASSISTANT_NAME } from './core/identity';
+import { DEMO_LIMITS, DemoLimitError } from './core/demoLimits';
 
 import { adminRoutes } from './routes/adminRoutes';
 import { documentRoutes } from './routes/documentRoutes';
@@ -95,6 +96,8 @@ app.get('/api/health', (c) => {
   });
 });
 
+app.get('/api/limits', c => c.json({ demo: true, limits: DEMO_LIMITS }));
+
 // 4. Mount Sub-Routers
 app.route('/api/admin', adminRoutes);
 app.route('/api/documents', documentRoutes);
@@ -141,7 +144,12 @@ export default {
         message.ack();
       } catch (err) {
         console.error('Queue Ingestion Consumer error:', err);
-        message.retry();
+        if (err instanceof DemoLimitError) {
+          const docId = (message.body as { docId?: string }).docId;
+          if (docId) await env.DB.prepare("UPDATE document_records SET processing_status = 'FAILED', error_code = ?, error_message = ? WHERE doc_id = ?").bind(err.code, err.message, docId).run();
+          message.ack();
+        } else if (message.attempts < 2) message.retry();
+        else message.ack();
       }
     }
   }

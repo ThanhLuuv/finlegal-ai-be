@@ -3,6 +3,7 @@
 import { LLMProviderService } from '../../services/llm';
 import { MultiAgentState, UserIntent } from '../types';
 import { ASSISTANT_NAME } from '../identity';
+import { DemoLimitError } from '../demoLimits';
 
 export class SupervisorRouter {
   private llm: LLMProviderService;
@@ -61,6 +62,7 @@ Respond strictly in JSON:
         }
       }
     } catch (err) {
+      if (err instanceof DemoLimitError) throw err;
       console.warn('Supervisor DeepSeek AI dynamic routing notice:', err);
       userIntent = hasSelectedDoc ? 'RAG_ONLY' : 'GENERAL_CHAT';
     }

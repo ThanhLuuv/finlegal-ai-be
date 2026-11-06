@@ -7,14 +7,33 @@ import { D1DocumentRepository } from '../storage/d1DocumentRepository';
 import { VectorRepository } from '../storage/vectorRepository';
 import { R2DocumentRepository } from '../storage/r2Repository';
 import { generatePdfBufferFromText, isValidPdfBuffer } from '../utils/pdfGenerator';
+import { DEMO_LIMITS, DemoLimitError, readLimitedRequest, reserveDemoUsage, validateDemoFile } from '../core/demoLimits';
 
-export const documentRoutes = new Hono<{ Bindings: Bindings }>();
+export const documentRoutes = new Hono<{ Bindings: Bindings; Variables: { demoRequest: Request } }>();
+
+// All ingestion entry points share the same quota, including seed, versions and reparse.
+documentRoutes.use('*', async (c, next) => {
+  if (c.req.method !== 'POST') return next();
+  try {
+    c.set('demoRequest', await readLimitedRequest(c.req.raw, DEMO_LIMITS.maxFileBytes + 64 * 1024));
+    await reserveDemoUsage(c.env.DB, c.req.header('cf-connecting-ip') || 'unknown', 'upload');
+  } catch (error) {
+    if (error instanceof DemoLimitError) {
+      if (error.retryAfter) c.header('Retry-After', String(error.retryAfter));
+      return c.json({ error: error.message, code: error.code, retryAfter: error.retryAfter }, error.status);
+    }
+    throw error;
+  }
+  await next();
+});
 
 // 1. Seed Sample Contract Document Endpoint for Recruiter/Demo Testing
 documentRoutes.post('/seed-sample', async (c) => {
   try {
-    const docId = `doc_demo_${Date.now()}`;
     const fileName = 'Hop_dong_mua_ban_hang_hoa_mau.pdf';
+    const existing = await c.env.DB.prepare("SELECT doc_id FROM document_records WHERE file_name = ? AND COALESCE(is_active, 1) = 1 AND processing_status = 'READY' LIMIT 1").bind(fileName).first<{ doc_id: string }>();
+    if (existing) return c.json({ success: true, docId: existing.doc_id, message: 'Tài liệu mẫu đã sẵn sàng.' });
+    const docId = `doc_demo_${crypto.randomUUID()}`;
 
     try {
       await c.env.DB.prepare(
@@ -86,6 +105,7 @@ Hợp đồng này được lập thành 04 bản có giá trị pháp lý như 
 
     return c.json({ success: true, docId, message: 'Đã nạp tài liệu mẫu dùng thử thành công!' });
   } catch (err) {
+    if (err instanceof DemoLimitError) return c.json({ error: err.message, code: err.code }, err.status);
     const errorMsg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Không thể nạp dữ liệu mẫu: ${errorMsg}` }, 500);
   }
@@ -133,6 +153,8 @@ documentRoutes.get('/:docId/status', async (c) => {
       status: doc.processing_status || 'UPLOADED',
       totalPages: doc.total_pages || 1,
       totalChunks: doc.total_chunks || 0,
+      error: doc.error_message || undefined,
+      errorCode: doc.error_code || undefined,
       extractionMethod: doc.extraction_method || 'bge_m3_pipeline',
       processedAt: doc.processed_at || doc.created_at,
       isReady: doc.processing_status === 'READY'
@@ -199,6 +221,7 @@ documentRoutes.get('/:docId/view', async (c) => {
       headers
     });
   } catch (err) {
+    if (err instanceof DemoLimitError) return c.json({ error: err.message, code: err.code }, err.status);
     const errorMsg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Không thể xem tài liệu: ${errorMsg}` }, 500);
   }
@@ -239,6 +262,7 @@ documentRoutes.delete('/:docId', async (c) => {
 
     return c.json({ success: true, message: 'Đã xóa đồng bộ tài liệu khỏi Cloudflare Vectorize, D1 và R2 thành công.' });
   } catch (err) {
+    if (err instanceof DemoLimitError) return c.json({ error: err.message, code: err.code }, err.status);
     const errorMsg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Không thể xóa tài liệu: ${errorMsg}` }, 500);
   }
@@ -247,12 +271,7 @@ documentRoutes.delete('/:docId', async (c) => {
 // 6. Document Upload Endpoint (Stage 1 Async Queue Ingestion Pipeline - Flow §8)
 documentRoutes.post('/', async (c) => {
   try {
-    let formData: any;
-    try {
-      formData = await c.req.formData();
-    } catch {
-      formData = await c.req.parseBody();
-    }
+    const formData: any = await c.get('demoRequest').formData();
 
     const file = formData.get ? formData.get('file') : formData['file'];
     let fileName = 'document.pdf';
@@ -260,6 +279,7 @@ documentRoutes.post('/', async (c) => {
 
     if (file && typeof file !== 'string' && 'arrayBuffer' in file) {
       fileName = file.name || 'contract_document.pdf';
+      validateDemoFile(fileName, file.size);
       arrayBuffer = (await file.arrayBuffer()) as ArrayBuffer;
     } else if (typeof formData['text'] === 'string' || (formData.get && typeof formData.get('text') === 'string')) {
       const textContent = typeof formData['text'] === 'string' ? formData['text'] : formData.get('text');
@@ -280,11 +300,9 @@ documentRoutes.post('/', async (c) => {
       return c.json({ error: 'INVALID_FILE: Tập tin tải lên bị rỗng hoặc không đúng định dạng.' }, 400);
     }
 
-    if (arrayBuffer.byteLength > 25 * 1024 * 1024) {
-      return c.json({ error: 'INVALID_FILE: Dung lượng file vượt quá giới hạn 25MB.' }, 400);
-    }
+    validateDemoFile(fileName, arrayBuffer.byteLength);
 
-    const docId = `doc_${Date.now()}`;
+    const docId = `doc_${crypto.randomUUID()}`;
     const r2Repo = new R2DocumentRepository(c.env.R2);
     const d1Repo = new D1DocumentRepository(c.env.DB);
     const consumer = new IngestionConsumer(
@@ -297,13 +315,14 @@ documentRoutes.post('/', async (c) => {
     );
 
     // Step 1: Save raw original file to R2 & Initial D1 record with UPLOADED status
-    const r2Key = await r2Repo.uploadDocument(docId, fileName, arrayBuffer);
+    const r2Key = `documents/${docId}/${fileName}`;
     await d1Repo.createInitialRecord({
       docId,
       fileName,
       r2Key,
       version: 'v1'
     });
+    await r2Repo.uploadDocument(docId, fileName, arrayBuffer);
 
     // Step 2: Dispatch Async Queue Job or Background Worker execution (Flow §8)
     if (c.env.INGESTION_QUEUE) {
@@ -328,6 +347,7 @@ documentRoutes.post('/', async (c) => {
       message: 'Tài liệu đã được tải lên thành công và đang được bóc tách dữ liệu không đồng bộ trong nền.'
     });
   } catch (err) {
+    if (err instanceof DemoLimitError) return c.json({ error: err.message, code: err.code }, err.status);
     const errorMsg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Lỗi xử lý tài liệu: ${errorMsg}` }, 500);
   }
@@ -338,12 +358,7 @@ documentRoutes.post('/', async (c) => {
 documentRoutes.post('/:docId/version', async (c) => {
   try {
     const parentDocId = c.req.param('docId');
-    let formData: any;
-    try {
-      formData = await c.req.formData();
-    } catch {
-      formData = await c.req.parseBody();
-    }
+    const formData: any = await c.get('demoRequest').formData();
 
     const file = formData.get ? formData.get('file') : formData['file'];
     if (!file || typeof file === 'string' || !('arrayBuffer' in file)) {
@@ -351,6 +366,7 @@ documentRoutes.post('/:docId/version', async (c) => {
     }
 
     const fileName = file.name || 'document_v2.pdf';
+    validateDemoFile(fileName, file.size);
     const arrayBuffer = (await file.arrayBuffer()) as ArrayBuffer;
 
     const d1Repo = new D1DocumentRepository(c.env.DB);
@@ -362,7 +378,7 @@ documentRoutes.post('/:docId/version', async (c) => {
       nextVersion = `v${currentVerNum + 1}`;
     }
 
-    const newDocId = `doc_${Date.now()}`;
+    const newDocId = `doc_${crypto.randomUUID()}`;
     const consumer = new IngestionConsumer(
       c.env.DB, 
       c.env.VECTORIZE, 
@@ -386,6 +402,7 @@ documentRoutes.post('/:docId/version', async (c) => {
       message: `Đã cập nhật lên phiên bản ${nextVersion} thành công.`
     });
   } catch (err) {
+    if (err instanceof DemoLimitError) return c.json({ error: err.message, code: err.code }, err.status);
     const errorMsg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Lỗi cập nhật phiên bản: ${errorMsg}` }, 500);
   }
@@ -408,6 +425,7 @@ documentRoutes.post('/:docId/reparse', async (c) => {
     }
 
     const arrayBuffer = await r2Object.arrayBuffer();
+    validateDemoFile(doc.file_name, arrayBuffer.byteLength);
     const vectorRepo = new VectorRepository(c.env.VECTORIZE, c.env.AI);
     const r2Repo = new R2DocumentRepository(c.env.R2);
 
@@ -441,6 +459,7 @@ documentRoutes.post('/:docId/reparse', async (c) => {
       message: 'Đã phân tích lại (re-parse) tài liệu thành công!'
     });
   } catch (err) {
+    if (err instanceof DemoLimitError) return c.json({ error: err.message, code: err.code }, err.status);
     const errorMsg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Không thể re-parse tài liệu: ${errorMsg}` }, 500);
   }

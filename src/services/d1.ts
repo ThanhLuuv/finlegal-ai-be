@@ -26,7 +26,7 @@ export class D1DatabaseService {
    * Excludes sensitive system tables (chat_logs, document_chunks, ip_rate_limits, document_records, document_sections).
    */
   public async getDynamicSchemaPrompt(): Promise<{ textPrompt: string; schemas: TableSchema[] }> {
-    const sensitiveTables = ['chat_logs', 'document_chunks', 'ip_rate_limits', 'document_records', 'document_sections'];
+    const sensitiveTables = ['chat_logs', 'document_chunks', 'ip_rate_limits', 'demo_usage', 'document_records', 'document_sections'];
     
     const masterQuery = `
       SELECT name FROM sqlite_master 
@@ -82,7 +82,7 @@ export class D1DatabaseService {
     const sanitizedSql = SQLSanitizer.validateReadOnlySelect(rawSql);
     
     // Enforce system table protection
-    const sensitiveTables = ['chat_logs', 'document_chunks', 'ip_rate_limits', 'document_records', 'document_sections'];
+    const sensitiveTables = ['chat_logs', 'document_chunks', 'ip_rate_limits', 'demo_usage', 'document_records', 'document_sections'];
     for (const table of sensitiveTables) {
       const regex = new RegExp(`\\b${table}\\b`, 'i');
       if (regex.test(sanitizedSql)) {

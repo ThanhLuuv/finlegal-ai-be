@@ -16,6 +16,7 @@ import { HybridRetriever } from '../core/retrieval/hybridRetriever';
 import { BgeReranker } from '../core/retrieval/bgeReranker';
 import { GroundedSynthesizer } from '../core/synthesis/synthesizer';
 import { GENERAL_CHAT_SYSTEM_PROMPT } from '../core/identity';
+import { DEMO_LIMITS, DemoLimitError, readLimitedRequest, reserveDemoUsage, validateDemoChat } from '../core/demoLimits';
 
 export const chatRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -24,8 +25,9 @@ chatRoutes.post('/stream', async (c) => {
   const startTime = Date.now();
   let body: any;
   try {
-    body = await c.req.json();
-  } catch {
+    body = await (await readLimitedRequest(c.req.raw, DEMO_LIMITS.maxChatBodyBytes)).json();
+  } catch (error) {
+    if (error instanceof DemoLimitError) return c.json({ error: error.message, code: error.code }, error.status);
     return c.json({ error: 'INVALID_JSON: Failed to parse request body as JSON' }, 400);
   }
 
@@ -51,37 +53,21 @@ chatRoutes.post('/stream', async (c) => {
   const docId = body.docId;
   const sessionId = body.sessionId || crypto.randomUUID();
   const traceId = crypto.randomUUID();
-  const history = Array.isArray(body.history) ? body.history : [];
-
-  // IP Rate Limiting Check (10 Requests / 10 Minutes per IP)
-  const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '127.0.0.1';
-  const now = Date.now();
-  const WINDOW_MS = 10 * 60 * 1000;
-  const MAX_REQUESTS = 10;
-
+  let history: Array<{ role: 'user' | 'assistant'; content: string }>;
   try {
-    const record = await c.env.DB.prepare('SELECT request_count, reset_at FROM ip_rate_limits WHERE ip = ?').bind(clientIp).first<{ request_count: number; reset_at: number }>();
-    if (record) {
-      if (now > record.reset_at) {
-        await c.env.DB.prepare('UPDATE ip_rate_limits SET request_count = 1, reset_at = ? WHERE ip = ?').bind(now + WINDOW_MS, clientIp).run();
-      } else if (record.request_count >= MAX_REQUESTS) {
-        const minutesLeft = Math.ceil((record.reset_at - now) / 60000);
-        return c.json({
-          error: `Hệ thống bảo vệ tự động: Địa chỉ IP của bạn đã dùng hết ${MAX_REQUESTS} lượt hỏi trong 10 phút để tránh rủi ro quá tải. Vui lòng quay lại sau ${minutesLeft} phút!`
-        }, 429);
-      } else {
-        await c.env.DB.prepare('UPDATE ip_rate_limits SET request_count = request_count + 1 WHERE ip = ?').bind(clientIp).run();
-      }
-    } else {
-      await c.env.DB.prepare('INSERT INTO ip_rate_limits (ip, request_count, reset_at) VALUES (?, 1, ?)').bind(clientIp, now + WINDOW_MS).run();
+    history = validateDemoChat(body);
+    await reserveDemoUsage(c.env.DB, c.req.header('cf-connecting-ip') || 'unknown', 'chat');
+  } catch (error) {
+    if (error instanceof DemoLimitError) {
+      if (error.retryAfter) c.header('Retry-After', String(error.retryAfter));
+      return c.json({ error: error.message, code: error.code, retryAfter: error.retryAfter }, error.status);
     }
-  } catch (rateErr) {
-    console.warn('Rate limiting check warning:', rateErr);
+    throw error;
   }
 
   // Initialize Core Services & Pipeline Components
-  const fallbackDeepSeekKey = atob('c2stNjJiZjM2NDc4ZDE5NGQ0Yzg3ZTVlOTRmNTcxZWQ5Mjg=');
-  const apiKey = c.env.DEEPSEEK_API_KEY || fallbackDeepSeekKey;
+  // Paid inference requires a Worker secret; public source must not contain a usable fallback key.
+  const apiKey = c.env.DEEPSEEK_API_KEY;
   const llm = new LLMProviderService(c.env.AI, apiKey);
   const d1Service = new D1DatabaseService(c.env.DB);
   const d1Repo = new D1DocumentRepository(c.env.DB);
@@ -185,19 +171,20 @@ chatRoutes.post('/stream', async (c) => {
               console.log(`[Multi-Turn RAG] Rewrote follow-up "${prompt}" -> "${searchPrompt}"`);
             }
           } catch (err) {
+            if (err instanceof DemoLimitError) throw err;
             console.warn('Contextual query rewrite notice:', err);
           }
         }
 
         // Extract keywords from contextual searchPrompt
-        const keywords = searchPrompt.toLowerCase().replace(/[^\w\sÀ-ỹ0-9]/g, ' ').split(/\s+/).filter((k: string) => k.length > 1);
+        const keywords = searchPrompt.toLowerCase().replace(/[^\w\sÀ-ỹ0-9]/g, ' ').split(/\s+/).filter((k: string) => k.length > 1).slice(0, 12);
 
         // 1. Hybrid Retrieval (Vectorize Top 25 + D1 Sparse) -> RRF Merge
-        const candidates = await hybridRetriever.retrieveCandidates(searchPrompt, keywords, docId, 25, 20);
+        const candidates = await hybridRetriever.retrieveCandidates(searchPrompt, keywords, docId, 8, 8);
 
         // 2. BGE Reranker -> Select Dynamic Top-K candidates (Top 4-10)
-        const dynamicTopK = hybridRetriever.determineDynamicTopK(searchPrompt);
-        topEvidenceBlocks = await reranker.rerank(searchPrompt, candidates, dynamicTopK);
+        const dynamicTopK = Math.min(4, hybridRetriever.determineDynamicTopK(searchPrompt));
+        topEvidenceBlocks = await reranker.rerank(searchPrompt, candidates.slice(0, 8).map(candidate => ({ ...candidate, content: candidate.content.slice(0, 1500) })), dynamicTopK);
 
         state.thoughtProcess.push({
           agent: 'RAG_AGENT',
@@ -277,7 +264,7 @@ chatRoutes.post('/stream', async (c) => {
       );
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      await sendEvent('error', { message: errorMsg });
+      await sendEvent('error', { message: errorMsg, code: err instanceof DemoLimitError ? err.code : undefined });
     }
   });
 });

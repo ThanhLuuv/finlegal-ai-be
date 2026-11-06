@@ -6,7 +6,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
     "typecheck": "tsc --noEmit",
-    "d1:init": "wrangler d1 execute finlegal-db --local --file=./src/db/schema.sql"
+    "d1:init": "wrangler d1 execute finlegal-db --local --file=./src/db/schema.sql",
+    "test:demo": "node scripts/run-demo-tests.cjs"
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20240806.0",
@@ -18,6 +19,8 @@
   },
   "devDependencies": {
     "typescript": "^5.4.5",
-    "wrangler": "^3.70.0"
+    "wrangler": "^3.70.0",
+    "esbuild": "0.17.19",
+    "miniflare": "3.20250718.3"
   }
 }

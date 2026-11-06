@@ -123,3 +123,10 @@ VALUES
     ('TX-1005', 'Nexus Financial LLC', 'CTR-2024-003', 'Q2-2024', 85000.00, 'COMPLETED', '2024-06-10');
 
 
+
+-- Atomic demo usage reservations; runtime creates this table for existing installations.
+CREATE TABLE IF NOT EXISTS demo_usage (
+    key TEXT PRIMARY KEY,
+    used INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);

@@ -4,11 +4,11 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { 
   extractTextFromPDFBuffer, 
   cleanPrintableText, 
-  assessPageTextQuality,
-  isCMapFontGarbage 
+  assessPageTextQuality 
 } from '../../utils/pdfExtractor';
 
 import { DocumentServiceClient } from './extractionClient';
+import { DEMO_LIMITS, DemoLimitError } from '../demoLimits';
 
 export interface ExtractedDocument {
   text: string;
@@ -29,18 +29,7 @@ export class UniversalTextExtractor {
    * Extracts text from binary document buffer according to file extension
    */
   public async extract(buffer: ArrayBuffer, fileName: string, documentId: string = 'doc_transient'): Promise<ExtractedDocument> {
-    // Step 1: Try Cloud Run Python Document Processing Service if configured
-    if (this.serviceClient && this.serviceClient.isConfigured()) {
-      const remoteParsed = await this.serviceClient.extractFromFile(documentId, buffer, fileName);
-      if (remoteParsed && remoteParsed.fullText && remoteParsed.fullText.trim().length > 0) {
-        return {
-          text: remoteParsed.fullText,
-          pageCount: remoteParsed.metadata.pageCount || 1,
-          extractionMethod: `cloud_run_service_${Object.keys(remoteParsed.metadata.methodsUsed || {})[0] || 'pymupdf'}`
-        };
-      }
-    }
-
+    // Demo parsing stays local: no remote OCR/vision calls before content limits are checked.
     const ext = fileName.split('.').pop()?.toLowerCase() || '';
 
     if (ext === 'pdf') {
@@ -73,56 +62,7 @@ export class UniversalTextExtractor {
       };
     }
 
-    // Tier 1 Fallback: Call Cloudflare Workers AI Vision Model (@cf/moondream/moondream3.1-9B-A2B)
-    if (this.ai) {
-      const visionModels = [
-        '@cf/moondream/moondream3.1-9B-A2B',
-        '@cf/meta/llama-3.2-11b-vision-instruct'
-      ];
-
-      const uint8 = new Uint8Array(buffer.slice(0, 400000));
-      const imageBytes = Array.from(uint8).map(b => Number(b));
-
-      for (const visionModel of visionModels) {
-        try {
-          console.log(`[Vision AI Executing] Reading PDF layout & OCR via Vision Model: ${visionModel}...`);
-          const response = await (this.ai as any).run(visionModel, {
-            prompt: 'agree\nExtract ALL readable text from this document image in clean structured Markdown format. Include all headings, name, contact details, skills, work experience, projects, education.',
-            image: imageBytes
-          });
-
-          const extractedText = typeof response === 'string' ? response : (response?.response || response?.description || response?.text || '');
-          if (extractedText && extractedText.trim().length > 20) {
-            return {
-              text: extractedText.trim(),
-              pageCount: 1,
-              extractionMethod: `tier1_vision_ai_${visionModel}`
-            };
-          }
-        } catch (visionErr) {
-          console.warn(`Vision Model ${visionModel} notice:`, String(visionErr));
-        }
-      }
-    }
-
-    // Fallback: Extract clean natural language tokens if cleanText has any valid words
-    const rawTokens = cleanText ? cleanText.match(/\b[A-Za-z0-9\u00C0-\u1EF9.,:\-@\/()]{3,}\b/g) || [] : [];
-    const validTokens = rawTokens.filter(t => !/^(Adobe|UCS|Poppins|90KSX|github|itfoundry|wVw|xnx|zFz)$/i.test(t));
-    const cleanTokens = validTokens.join(' ').trim();
-
-    if (cleanTokens && cleanTokens.length > 30 && !isCMapFontGarbage(cleanTokens)) {
-      return {
-        text: cleanTokens,
-        pageCount: 1,
-        extractionMethod: 'tier1_clean_tokens_fallback'
-      };
-    }
-
-    return {
-      text: `[Tài liệu PDF Scan / Bảng biểu phức tạp (${buffer.byteLength} bytes)]`,
-      pageCount: 1,
-      extractionMethod: 'tier1_fallback'
-    };
+    throw new DemoLimitError('Bản demo chỉ hỗ trợ PDF có lớp văn bản đọc được, chưa hỗ trợ OCR AI cho file scan hoặc PDF phức tạp. Vui lòng dùng TXT/DOCX hoặc PDF có thể chọn chữ.');
   }
 
   /**
@@ -132,7 +72,11 @@ export class UniversalTextExtractor {
   private extractDocx(buffer: ArrayBuffer): ExtractedDocument {
     try {
       const bytes = new Uint8Array(buffer);
-      const unzipped = unzipSync(bytes);
+      const unzipped = unzipSync(bytes, { filter: entry => {
+        if (entry.name.toLowerCase() !== 'word/document.xml') return false;
+        if (entry.originalSize > DEMO_LIMITS.maxDocumentChars * 10) throw new DemoLimitError('Nội dung DOCX giải nén vượt ngưỡng demo. Vui lòng dùng file ngắn hơn.');
+        return true;
+      } });
 
       // Find word/document.xml in ZIP entries
       let documentXml: string | null = null;
@@ -156,6 +100,7 @@ export class UniversalTextExtractor {
         return this.parseDocxXml(documentXml, buffer.byteLength);
       }
     } catch (e) {
+      if (e instanceof DemoLimitError) throw e;
       console.error('fflate DOCX unzip error:', e);
     }
 

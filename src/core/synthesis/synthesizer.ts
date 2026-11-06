@@ -5,6 +5,7 @@ import { RetrievedEvidenceCandidate } from '../retrieval/hybridRetriever';
 import { CitationValidator } from './citationValidator';
 import { Citation, GroundedSynthesisResult } from '../types';
 import { ASSISTANT_IDENTITY, ASSISTANT_NAME } from '../identity';
+import { DemoLimitError } from '../demoLimits';
 
 export class GroundedSynthesizer {
   private llm: LLMProviderService;
@@ -45,6 +46,8 @@ export class GroundedSynthesizer {
     const sqlStr = sqlData && Array.isArray(sqlData) && sqlData.length > 0
       ? JSON.stringify(sqlData, null, 2)
       : 'Không có dữ liệu SQL D1.';
+
+    if (sqlStr.length > 4000) throw new DemoLimitError('Kết quả dữ liệu vượt ngưỡng demo. Vui lòng lọc truy vấn hoặc hỏi số liệu tổng hợp.');
 
     // Format recent chat history (last 4 turns)
     let historyContext = '';

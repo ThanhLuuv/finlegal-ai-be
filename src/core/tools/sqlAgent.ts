@@ -3,6 +3,7 @@
 import { LLMProviderService } from '../../services/llm';
 import { D1DatabaseService } from '../../services/d1';
 import { MultiAgentState } from '../types';
+import { DemoLimitError } from '../demoLimits';
 
 export class SQLToolAgent {
   private llm: LLMProviderService;
@@ -51,7 +52,8 @@ RULES:
       state.sqlQuery = cleanQuery;
 
       if (cleanQuery && cleanQuery.toUpperCase().startsWith('SELECT')) {
-        const results = await this.d1Service.executeQuery(cleanQuery);
+        const results = await this.d1Service.executeQuery(`SELECT * FROM (${cleanQuery.replace(/;\s*$/, '')}) LIMIT 21`);
+        if (results.length > 20) throw new DemoLimitError('Truy vấn trả về quá nhiều dữ liệu cho bản demo. Hãy lọc theo hợp đồng, thời gian hoặc yêu cầu số liệu tổng hợp.');
         state.sqlResult = results;
         state.sqlData = results;
 
@@ -63,6 +65,7 @@ RULES:
         });
       }
     } catch (err) {
+      if (err instanceof DemoLimitError) throw err;
       const errorMsg = err instanceof Error ? err.message : String(err);
       state.thoughtProcess.push({
         agent: 'SQL_AGENT',

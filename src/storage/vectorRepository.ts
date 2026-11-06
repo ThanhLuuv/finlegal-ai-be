@@ -34,23 +34,13 @@ export class VectorRepository {
    */
   public async generateEmbedding(text: string): Promise<number[]> {
     const safeText = safeTruncateText(text, 2500);
-    const maxRetries = 2;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const res = await (this.ai as any).run('@cf/baai/bge-m3', { text: [safeText] });
-        if (res && res.data && res.data[0]) {
-          return adjustVectorDimension(res.data[0], 768);
-        }
-      } catch (err) {
-        if (attempt === maxRetries) {
-          throw new Error(`EMBEDDING_FAILED: BGE-M3 model execution failed after ${maxRetries + 1} attempts: ${String(err)}`);
-        }
-        await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
-      }
+    try {
+      const res = await (this.ai as any).run('@cf/baai/bge-m3', { text: [safeText] });
+      if (res?.data?.[0]) return adjustVectorDimension(res.data[0], 768);
+    } catch {
+      throw new Error('EMBEDDING_FAILED: Không tạo được embedding trong lượt demo. Vui lòng thử lại sau.');
     }
-
-    throw new Error('EMBEDDING_FAILED: BGE-M3 model failed to produce vector.');
+    throw new Error('EMBEDDING_FAILED: BGE-M3 không trả về vector hợp lệ.');
   }
 
   /**
@@ -68,17 +58,15 @@ export class VectorRepository {
     const batchResults = await Promise.all(
       batches.map(async (batchTexts) => {
         const safeBatch = batchTexts.map(t => safeTruncateText(t, 2500));
-        for (let attempt = 0; attempt <= 2; attempt++) {
-          try {
-            const res = await (this.ai as any).run('@cf/baai/bge-m3', { text: safeBatch });
-            if (res && res.data && Array.isArray(res.data)) {
-              return res.data.map((v: number[]) => adjustVectorDimension(v, 768));
-            }
-          } catch {
-            await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+        try {
+          const res = await (this.ai as any).run('@cf/baai/bge-m3', { text: safeBatch });
+          if (Array.isArray(res?.data) && res.data.length === safeBatch.length && res.data.every((vector: unknown) => Array.isArray(vector) && vector.length > 0)) {
+            return res.data.map((vector: number[]) => adjustVectorDimension(vector, 768));
           }
+        } catch {
+          // The caller records FAILED; demo embedding calls are not automatically repeated.
         }
-        return safeBatch.map(() => new Array(768).fill(0));
+        throw new Error('EMBEDDING_FAILED: Không tạo được embedding trong lượt demo. Vui lòng thử lại sau.');
       })
     );
 

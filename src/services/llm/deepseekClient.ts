@@ -13,7 +13,8 @@ export class DeepSeekClient {
     if (!this.apiKey) return null;
 
     // Per DeepSeek API docs: deepseek-flash is served by DeepSeek-V4.1-Flash-1017
-    const deepseekModels = ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'];
+    // Demo: one primary attempt; never retry across expensive Pro/reasoning models.
+    const deepseekModels = ['deepseek-flash'];
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
 
     for (const modelName of deepseekModels) {
@@ -25,6 +26,7 @@ export class DeepSeekClient {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${this.apiKey}`
           },
+          signal: AbortSignal.timeout(25000),
           body: JSON.stringify({
             model: modelName,
             messages: formattedMessages,

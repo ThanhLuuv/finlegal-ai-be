@@ -6,7 +6,7 @@ import { RecursiveCharacterTextSplitter, StructuredRagChunk } from '../chunking/
 import { D1DocumentRepository } from '../../storage/d1DocumentRepository';
 import { VectorRepository } from '../../storage/vectorRepository';
 import { R2DocumentRepository } from '../../storage/r2Repository';
-import { LLMProviderService } from '../../services/llm';
+import { DEMO_LIMITS, DemoLimitError, validateDemoFile, validateDemoText } from '../demoLimits';
 
 export interface IngestionJobResult {
   success: boolean;
@@ -58,11 +58,12 @@ export class IngestionConsumer {
     buffer: ArrayBuffer,
     options?: { userId?: string; version?: string; parentDocId?: string; r2Key?: string }
   ): Promise<IngestionJobResult> {
+    validateDemoFile(fileName, buffer.byteLength);
     let retryCount = 0;
-    const maxRetries = 2;
+    const maxRetries = 0; // Demo never repeats a whole AI ingestion pipeline automatically.
 
     // Step 1: Save raw original file in R2 & Initial D1 Record
-    const r2Key = options?.r2Key || await this.r2Repo.uploadDocument(docId, fileName, buffer);
+    const r2Key = options?.r2Key || `documents/${docId}/${fileName}`;
     await this.d1Repo.createInitialRecord({
       docId,
       fileName,
@@ -72,11 +73,14 @@ export class IngestionConsumer {
       parentDocId: options?.parentDocId
     });
 
+    if (!options?.r2Key) await this.r2Repo.uploadDocument(docId, fileName, buffer);
+
     while (retryCount <= maxRetries) {
       try {
         // Step 2: Transition to PARSING status & Extract Text
         await this.d1Repo.updateStatus(docId, 'PARSING', { retryCount });
         const extracted = await this.extractor.extract(buffer, fileName, docId);
+        validateDemoText(extracted.text);
 
         // Step 3: Transition to CHUNKING status & Recursive Character Splitting
         await this.d1Repo.updateStatus(docId, 'CHUNKING', { totalPages: extracted.pageCount, retryCount });
@@ -85,6 +89,8 @@ export class IngestionConsumer {
         if (chunks.length === 0) {
           throw new Error('Nội dung văn bản không có dữ liệu để cắt chunk.');
         }
+
+        if (chunks.length > DEMO_LIMITS.maxChunks) throw new DemoLimitError('Tài liệu vượt ngưỡng 40 đoạn nội dung. Vui lòng tách file nhỏ hơn; hệ thống chưa tạo embedding.');
 
         // Step 4: Transition to EMBEDDING status & Persist D1 Chunks
         await this.d1Repo.updateStatus(docId, 'EMBEDDING', {
@@ -147,6 +153,10 @@ export class IngestionConsumer {
           message: 'Tài liệu đã được nạp dữ liệu không đồng bộ, tạo Vector bge-m3 và lưu trữ an toàn.'
         };
       } catch (err) {
+        if (err instanceof DemoLimitError) {
+          await this.d1Repo.updateStatus(docId, 'FAILED', { errorCode: err.code, errorMessage: err.message });
+          throw err;
+        }
         retryCount++;
         const errorMsg = err instanceof Error ? err.message : String(err);
 

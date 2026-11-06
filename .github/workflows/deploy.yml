@@ -38,6 +38,9 @@ jobs:
       - name: Run TypeScript Check
         run: npm run typecheck
 
+      - name: Test Demo Limits
+        run: npm run test:demo
+
       - name: Deploy Worker to Cloudflare Production
         run: npx wrangler deploy --minify
         env:

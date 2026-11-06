@@ -19,26 +19,8 @@ export class WorkersAiClient {
 
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
 
-    if (modelOverride) {
-      try {
-        const response = await (this.ai as any).run(modelOverride, {
-          messages: formattedMessages,
-          temperature,
-          max_tokens: maxTokens,
-        });
-        const extracted = extractLLMResponseText(response);
-        if (extracted) return extracted;
-      } catch (err) {
-        console.warn(`Model override ${modelOverride} failed:`, err);
-      }
-    }
-
-    // Verified Cloudflare Workers AI Free Plan Catalog
-    const models = [
-      '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
-      '@cf/meta/llama-3.1-8b-instruct',
-      '@cf/mistral/mistral-7b-instruct-v0.2'
-    ];
+    // Demo has one small-model fallback per generation.
+    const models = ['@cf/meta/llama-3.1-8b-instruct'];
 
     for (const modelName of models) {
       try {

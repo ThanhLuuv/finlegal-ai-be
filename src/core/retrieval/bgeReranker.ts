@@ -23,7 +23,6 @@ export class BgeReranker {
     // Try Workers AI BGE Reranker models catalog (@cf/baai/bge-reranker-large, @cf/baai/bge-reranker-base)
     if (this.ai) {
       const rerankModels = [
-        '@cf/baai/bge-reranker-large',
         '@cf/baai/bge-reranker-base'
       ];
       const inputTexts = candidates.map(c => c.content);
